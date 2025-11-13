@@ -13,6 +13,7 @@ const PAN_CC_BASE = 97; // CC 97..128 -> pan knobs for channels 1..32
 const FEEDBACK_INTERVAL_MS = 300;
 
 const lastFaderReceiveAction: Record<number, number> = {};
+const lastPanReceiveAction: Record<number, number> = {};
 
 loadAPI(24);
 host.defineController(
@@ -109,10 +110,7 @@ function displayedVolumeChanged(
   // midiOut.sendMidi(0xB0 | MIDI_CHANNEL, FADER_CC_BASE + faderIndex, ccVal);
 }
 
-function normalizedVolumeChanged(
-  faderIndex: number,
-  normalizedValue: number
-) {
+function normalizedVolumeChanged(faderIndex: number, normalizedValue: number) {
   if (faderValueMappingSetting.get() !== "full range") {
     return;
   }
@@ -133,6 +131,32 @@ function sendSysExMuteToMixer(faderIndex: number, isMuted: boolean) {
 
   const sysex = constructSysEx(command);
 
+  midiOut.sendSysex(sysex);
+}
+
+function panChanged(faderIndex: number, value: number) {
+  const lastActionTimestamp = lastPanReceiveAction[faderIndex];
+
+  if (
+    lastActionTimestamp != null &&
+    Date.now() - FEEDBACK_INTERVAL_MS <= lastActionTimestamp
+  ) {
+    return;
+  }
+
+  const sysexValue = 30 + Math.round(value * 30);
+
+  const high7bit = ((sysexValue >> 7) & 0x7f).toString(16).padStart(2, "0");
+  const low7bit = (sysexValue & 0x7f).toString(16).padStart(2, "0");
+
+  // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX MUTE_FUNCTION_CODE VALUE
+  const command = `2001${faderIndex
+    .toString(16)
+    .padStart(2, "0")}03${high7bit}${low7bit}`.toUpperCase();
+
+  println(`pan changed s ${sysexValue}`);
+
+  const sysex = constructSysEx(command);
   midiOut.sendSysex(sysex);
 }
 
@@ -177,6 +201,23 @@ function setBitwigFaderVolumeBySysexValue(
 function setBitwigTrackMute(faderIndex: number, isMuted: boolean) {
   const track = trackBank.getItemAt(faderIndex);
   track.mute().set(isMuted);
+}
+
+function setBitwigFaderPanBySysexValue(
+  faderIndex: number,
+  sysexPan: number,
+) {
+  try {
+    const track = trackBank.getItemAt(faderIndex);
+
+    const panValue = -1 + sysexPan / 30;
+
+    track.pan().setRaw(panValue);
+
+    lastPanReceiveAction[faderIndex] = Date.now();
+  } catch (error) {
+    host.errorln(`Could not set Bitwig fader pan by sysex ${error}`);
+  }
 }
 
 /* General control functions */
@@ -248,11 +289,19 @@ function processIncomingSysex(sysexData: string) {
 
       // Volume
       if (functionCode === "01") {
-        setBitwigFaderVolumeBySysexValue(faderIndexInt, sysexValue, settingsFaderValueMapping);
+        setBitwigFaderVolumeBySysexValue(
+          faderIndexInt,
+          sysexValue,
+          settingsFaderValueMapping
+        );
 
       // Mute
       } else if (functionCode === "02") {
         setBitwigTrackMute(faderIndexInt, !!sysexValue);
+
+      // Pan
+      } else if (functionCode === "03") {
+        setBitwigFaderPanBySysexValue(faderIndexInt, sysexValue);
       }
     });
   }
@@ -262,8 +311,17 @@ function createBitwigSettings() {
   midiChannelSetting = host
     .getPreferences()
     .getNumberSetting("MIDI channel (0 = omni)", "Connection", 0, 16, 1, "", 1);
-  faderValueMappingSetting = host.getPreferences().getEnumSetting("dB mapping", "Fader", ["exact", "full range"], "exact");
-  host.getPreferences().getStringSetting("Developed by Felix Gertz", "Support", 128, "Support me via https://aldipower.bandcamp.com/album/das-reihenhaus and purchase the album. Thank you so much.")
+  faderValueMappingSetting = host
+    .getPreferences()
+    .getEnumSetting("dB mapping", "Fader", ["exact", "full range"], "exact");
+  host
+    .getPreferences()
+    .getStringSetting(
+      "Developed by Felix Gertz",
+      "Support",
+      128,
+      "Support me via https://aldipower.bandcamp.com/album/das-reihenhaus and purchase the album. Thank you so much."
+    );
 }
 
 function init() {
@@ -289,9 +347,17 @@ function init() {
         displayedVolumeChanged(i, displayedValue);
       });
 
-    t.volume().value().addRawValueObserver((value) => {
-      normalizedVolumeChanged(i, value);
-    });
+    t.volume()
+      .value()
+      .addRawValueObserver((value) => {
+        normalizedVolumeChanged(i, value);
+      });
+
+    t.pan()
+      .value()
+      .addRawValueObserver((value) => {
+        panChanged(i, value);
+      });
 
     t.mute().addValueObserver((isMuted) => {
       sendSysExMuteToMixer(i, isMuted);

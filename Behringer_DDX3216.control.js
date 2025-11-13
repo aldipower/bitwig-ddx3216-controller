@@ -9,6 +9,7 @@ const SELECT_CC_BASE = 65; // CC 65..96 -> select buttons 1..32 (used to open/cl
 const PAN_CC_BASE = 97; // CC 97..128 -> pan knobs for channels 1..32
 const FEEDBACK_INTERVAL_MS = 300;
 const lastFaderReceiveAction = {};
+const lastPanReceiveAction = {};
 loadAPI(24);
 host.defineController(VENDOR, EXTENSION_NAME, VERSION, "57fb8818-a6a6-4a23-9413-2a1a5aea3ce1", AUTHOR);
 host.setShouldFailOnDeprecatedUse(true);
@@ -90,6 +91,23 @@ function sendSysExMuteToMixer(faderIndex, isMuted) {
     const sysex = constructSysEx(command);
     midiOut.sendSysex(sysex);
 }
+function panChanged(faderIndex, value) {
+    const lastActionTimestamp = lastPanReceiveAction[faderIndex];
+    if (lastActionTimestamp != null &&
+        Date.now() - FEEDBACK_INTERVAL_MS <= lastActionTimestamp) {
+        return;
+    }
+    const sysexValue = 30 + Math.round(value * 30);
+    const high7bit = ((sysexValue >> 7) & 0x7f).toString(16).padStart(2, "0");
+    const low7bit = (sysexValue & 0x7f).toString(16).padStart(2, "0");
+    // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX MUTE_FUNCTION_CODE VALUE
+    const command = `2001${faderIndex
+        .toString(16)
+        .padStart(2, "0")}03${high7bit}${low7bit}`.toUpperCase();
+    println(`pan changed s ${sysexValue}`);
+    const sysex = constructSysEx(command);
+    midiOut.sendSysex(sysex);
+}
 /* From DDX3216 */
 function dbToNormalized(db) {
     if (db <= -80.0) {
@@ -121,6 +139,17 @@ function setBitwigFaderVolumeBySysexValue(faderIndex, sysexVolume, settingsFader
 function setBitwigTrackMute(faderIndex, isMuted) {
     const track = trackBank.getItemAt(faderIndex);
     track.mute().set(isMuted);
+}
+function setBitwigFaderPanBySysexValue(faderIndex, sysexPan) {
+    try {
+        const track = trackBank.getItemAt(faderIndex);
+        const panValue = -1 + sysexPan / 30;
+        track.pan().setRaw(panValue);
+        lastPanReceiveAction[faderIndex] = Date.now();
+    }
+    catch (error) {
+        host.errorln(`Could not set Bitwig fader pan by sysex ${error}`);
+    }
 }
 /* General control functions */
 function processIncomingSysex(sysexData) {
@@ -164,6 +193,10 @@ function processIncomingSysex(sysexData) {
             }
             else if (functionCode === "02") {
                 setBitwigTrackMute(faderIndexInt, !!sysexValue);
+                // Pan
+            }
+            else if (functionCode === "03") {
+                setBitwigFaderPanBySysexValue(faderIndexInt, sysexValue);
             }
         });
     }
@@ -172,8 +205,12 @@ function createBitwigSettings() {
     midiChannelSetting = host
         .getPreferences()
         .getNumberSetting("MIDI channel (0 = omni)", "Connection", 0, 16, 1, "", 1);
-    faderValueMappingSetting = host.getPreferences().getEnumSetting("dB mapping", "Fader", ["exact", "full range"], "exact");
-    host.getPreferences().getStringSetting("Developed by Felix Gertz", "Support", 128, "Support me via https://aldipower.bandcamp.com/album/das-reihenhaus and purchase the album. Thank you so much.");
+    faderValueMappingSetting = host
+        .getPreferences()
+        .getEnumSetting("dB mapping", "Fader", ["exact", "full range"], "exact");
+    host
+        .getPreferences()
+        .getStringSetting("Developed by Felix Gertz", "Support", 128, "Support me via https://aldipower.bandcamp.com/album/das-reihenhaus and purchase the album. Thank you so much.");
 }
 function init() {
     createBitwigSettings();
@@ -193,8 +230,15 @@ function init() {
             .addValueObserver((displayedValue) => {
             displayedVolumeChanged(i, displayedValue);
         });
-        t.volume().value().addRawValueObserver((value) => {
+        t.volume()
+            .value()
+            .addRawValueObserver((value) => {
             normalizedVolumeChanged(i, value);
+        });
+        t.pan()
+            .value()
+            .addRawValueObserver((value) => {
+            panChanged(i, value);
         });
         t.mute().addValueObserver((isMuted) => {
             sendSysExMuteToMixer(i, isMuted);
