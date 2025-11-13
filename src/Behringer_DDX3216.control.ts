@@ -123,6 +123,19 @@ function normalizedVolumeChanged(
   sendSysExVolumeToMixer(faderIndex, 1472 * normalizedValue);
 }
 
+function sendSysExMuteToMixer(faderIndex: number, isMuted: boolean) {
+  const data = isMuted ? "0001" : "0000";
+
+  // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX MUTE_FUNCTION_CODE VALUE
+  const command = `2001${faderIndex
+    .toString(16)
+    .padStart(2, "0")}02${data}`.toUpperCase();
+
+  const sysex = constructSysEx(command);
+
+  midiOut.sendSysex(sysex);
+}
+
 /* From DDX3216 */
 
 function dbToNormalized(db) {
@@ -159,6 +172,11 @@ function setBitwigFaderVolumeBySysexValue(
   } catch (error) {
     host.errorln(`Could not set Bitwig fader volume by sysex ${error}`);
   }
+}
+
+function setBitwigTrackMute(faderIndex: number, isMuted: boolean) {
+  const track = trackBank.getItemAt(faderIndex);
+  track.mute().set(isMuted);
 }
 
 /* General control functions */
@@ -231,6 +249,10 @@ function processIncomingSysex(sysexData: string) {
       // Volume
       if (functionCode === "01") {
         setBitwigFaderVolumeBySysexValue(faderIndexInt, sysexValue, settingsFaderValueMapping);
+
+      // Mute
+      } else if (functionCode === "02") {
+        setBitwigTrackMute(faderIndexInt, !!sysexValue);
       }
     });
   }
@@ -269,6 +291,10 @@ function init() {
 
     t.volume().value().addRawValueObserver((value) => {
       normalizedVolumeChanged(i, value);
+    });
+
+    t.mute().addValueObserver((isMuted) => {
+      sendSysExMuteToMixer(i, isMuted);
     });
   }
 
