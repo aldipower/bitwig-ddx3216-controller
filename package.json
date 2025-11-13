@@ -5,6 +5,7 @@
   "main": "Behringer_DDX3216.control.js",
   "scripts": {
     "build": "tsc",
+    "dev": "tsc --watch",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "outDir": "./",
-    "target": "ES5",
-    "module": "CommonJS",
+    "target": "es2015",
+    "module": "commonjs",
     "checkJs": false,
     "allowJs": true,
     "moduleResolution": "node"
