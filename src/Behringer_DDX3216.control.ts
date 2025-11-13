@@ -4,11 +4,11 @@ const VERSION = "0.7.0";
 const AUTHOR = "Felix Gertz";
 
 const DEVICE_ID = 0x7f;
-const NUM_FADERS = 66;
+const NUM_FADERS = 16 * 3;
+const NUM_EFFECT_FADERS = 8; // 8 on page 4 AUX/FX
+const MASTER_FADER_INDEX = 64;
 
-const MUTE_CC_BASE = 33; // CC 33..64 -> mute buttons 1..32
 const SELECT_CC_BASE = 65; // CC 65..96 -> select buttons 1..32 (used to open/close groups)
-const PAN_CC_BASE = 97; // CC 97..128 -> pan knobs for channels 1..32
 
 const FEEDBACK_INTERVAL_MS = 300;
 
@@ -30,6 +30,8 @@ host.addDeviceNameBasedDiscoveryPair(["DDX3216"], ["DDX3216"]);
 let midiIn: API.MidiIn;
 let midiOut: API.MidiOut;
 let trackBank: API.TrackBank;
+let effectTrackBank: API.TrackBank;
+let masterTrack: API.MasterTrack;
 let cursorTrack: API.CursorTrack;
 
 let midiChannelSetting: API.SettableRangedValue;
@@ -53,6 +55,14 @@ function constructSysEx(command: string) {
   return `F0002032${getDeviceByte(getMidiChannel())
     .toString(16)
     .padStart(2, "0")}0B${command}F7`;
+}
+
+function getTrack(faderIndex: number) {
+  return faderIndex === MASTER_FADER_INDEX
+    ? masterTrack
+    : faderIndex >= NUM_FADERS - 1 && faderIndex < NUM_FADERS - 1 + 16
+    ? effectTrackBank.getItemAt(faderIndex - NUM_FADERS)
+    : trackBank.getItemAt(faderIndex);
 }
 
 /* To DDX3216 */
@@ -86,6 +96,8 @@ function displayedVolumeChanged(
   faderIndex: number,
   bitwigDisplayValue: string
 ) {
+  println(`Fader vol ${faderIndex} ${bitwigDisplayValue}`);
+
   if (faderValueMappingSetting.get() !== "exact") {
     return;
   }
@@ -106,8 +118,6 @@ function displayedVolumeChanged(
   const sysExVolume = Math.round((dbVolume + 80) * 16);
 
   sendSysExVolumeToMixer(faderIndex, sysExVolume);
-
-  // midiOut.sendMidi(0xB0 | MIDI_CHANNEL, FADER_CC_BASE + faderIndex, ccVal);
 }
 
 function normalizedVolumeChanged(faderIndex: number, normalizedValue: number) {
@@ -115,7 +125,7 @@ function normalizedVolumeChanged(faderIndex: number, normalizedValue: number) {
     return;
   }
 
-  const track = trackBank.getItemAt(faderIndex);
+  const track = getTrack(faderIndex);
   normalizedValue = track.volume().get();
 
   sendSysExVolumeToMixer(faderIndex, 1472 * normalizedValue);
@@ -179,7 +189,7 @@ function setBitwigFaderVolumeBySysexValue(
   settingsFaderValueMapping: string
 ) {
   try {
-    const track = trackBank.getItemAt(faderIndex);
+    const track = getTrack(faderIndex);
 
     let normalizedVolume: number;
 
@@ -199,16 +209,13 @@ function setBitwigFaderVolumeBySysexValue(
 }
 
 function setBitwigTrackMute(faderIndex: number, isMuted: boolean) {
-  const track = trackBank.getItemAt(faderIndex);
+  const track = getTrack(faderIndex);
   track.mute().set(isMuted);
 }
 
-function setBitwigFaderPanBySysexValue(
-  faderIndex: number,
-  sysexPan: number,
-) {
+function setBitwigFaderPanBySysexValue(faderIndex: number, sysexPan: number) {
   try {
-    const track = trackBank.getItemAt(faderIndex);
+    const track = getTrack(faderIndex);
 
     const panValue = -1 + sysexPan / 30;
 
@@ -217,6 +224,18 @@ function setBitwigFaderPanBySysexValue(
     lastPanReceiveAction[faderIndex] = Date.now();
   } catch (error) {
     host.errorln(`Could not set Bitwig fader pan by sysex ${error}`);
+  }
+}
+
+function selectBitwigFaderAndCloseOpenGroup(
+  faderIndex: number,
+  groupIsOpen: boolean
+) {
+  const track: API.Track = trackBank.getItemAt(faderIndex);
+  track.selectInEditor();
+
+  if (track.isGroup()) {
+    track.isGroupExpanded().set(groupIsOpen);
   }
 }
 
@@ -278,7 +297,7 @@ function processIncomingSysex(sysexData: string) {
       );
 
       println(
-        `faderIndex: ${faderIndex} fnType: ${functionCode} highWord: ${highWord} lowWord: ${lowWord} sysexValue: ${sysexValue}`
+        `faderIndex: ${faderIndex} fnCode: ${functionCode} highWord: ${highWord} lowWord: ${lowWord} sysexValue: ${sysexValue}`
       );
 
       if (isNaN(sysexValue)) {
@@ -295,25 +314,31 @@ function processIncomingSysex(sysexData: string) {
           settingsFaderValueMapping
         );
 
-      // Mute
+        // Mute
       } else if (functionCode === "02") {
         setBitwigTrackMute(faderIndexInt, !!sysexValue);
 
-      // Pan
+        // Pan
       } else if (functionCode === "03") {
         setBitwigFaderPanBySysexValue(faderIndexInt, sysexValue);
+
+        // Select track and close/open group
+      } else if (functionCode === "04") {
+        selectBitwigFaderAndCloseOpenGroup(faderIndexInt, !sysexValue);
       }
     });
   }
 }
 
-function createBitwigSettings() {
+function createBitwigSettingsUI() {
   midiChannelSetting = host
     .getPreferences()
     .getNumberSetting("MIDI channel (0 = omni)", "Connection", 0, 16, 1, "", 1);
+
   faderValueMappingSetting = host
     .getPreferences()
     .getEnumSetting("dB mapping", "Fader", ["exact", "full range"], "exact");
+
   host
     .getPreferences()
     .getStringSetting(
@@ -324,22 +349,13 @@ function createBitwigSettings() {
     );
 }
 
-function init() {
-  createBitwigSettings();
-
-  midiIn = host.getMidiInPort(0);
-  midiOut = host.getMidiOutPort(0);
-
-  // Create a track bank representing the visible area of the mixer
-  trackBank = host.createMainTrackBank(NUM_FADERS, 0, 0);
-  // Keep a cursor for global navigation/selection actions
-  cursorTrack = host.createCursorTrack(0, 0);
-
+function registerObserver() {
   for (let i = 0; i < NUM_FADERS; i++) {
     const t = trackBank.getItemAt(i);
     t.volume().markInterested();
     t.pan().markInterested();
     t.mute().markInterested();
+    t.isGroupExpanded().markInterested();
 
     t.volume()
       .displayedValue()
@@ -364,6 +380,75 @@ function init() {
     });
   }
 
+  // Effect faders
+  for (let i = 0; i < NUM_EFFECT_FADERS; i++) {
+    const t = effectTrackBank.getItemAt(i);
+    t.volume().markInterested();
+    t.pan().markInterested();
+    t.mute().markInterested();
+
+    t.volume()
+      .displayedValue()
+      .addValueObserver((displayedValue) => {
+        displayedVolumeChanged(NUM_FADERS + i, displayedValue);
+      });
+
+    t.volume()
+      .value()
+      .addRawValueObserver((value) => {
+        normalizedVolumeChanged(NUM_FADERS + i, value);
+      });
+
+    t.pan()
+      .value()
+      .addRawValueObserver((value) => {
+        panChanged(NUM_FADERS + i, value);
+      });
+
+    t.mute().addValueObserver((isMuted) => {
+      sendSysExMuteToMixer(NUM_FADERS + i, isMuted);
+    });
+  }
+
+  masterTrack.volume().markInterested();
+  masterTrack
+    .volume()
+    .displayedValue()
+    .addValueObserver((displayedValue) => {
+      displayedVolumeChanged(MASTER_FADER_INDEX, displayedValue);
+    });
+  masterTrack
+    .volume()
+    .value()
+    .addRawValueObserver((value) => {
+      normalizedVolumeChanged(MASTER_FADER_INDEX, value);
+    });
+  masterTrack.pan().markInterested();
+  masterTrack
+    .pan()
+    .value()
+    .addRawValueObserver((value) => {
+      panChanged(MASTER_FADER_INDEX, value);
+    });
+}
+
+function init() {
+  createBitwigSettingsUI();
+
+  midiIn = host.getMidiInPort(0);
+  midiOut = host.getMidiOutPort(0);
+
+  trackBank = host.createMainTrackBank(NUM_FADERS, 0, 0);
+  effectTrackBank = host.createEffectTrackBank(8, 0, 0);
+  masterTrack = host.createMasterTrack(0);
+  cursorTrack = host.createCursorTrack("cursor", "Cursor Track", 0, 0, true);
+
+  // TODO: Create proper scrolling to selected tracks
+  // trackBank = cursorTrack.createSiblingsTrackBank(NUM_FADERS, 0, 0, true, true);
+  // trackBank.cursorIndex().markInterested();
+
+  registerObserver();
+
   midiIn.setSysexCallback((sysexData) => {
     println(
       `Sysex received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`
@@ -381,6 +466,7 @@ function init() {
   );
 }
 
+// TODO: All faders
 function exit() {
   for (let i = 0; i < NUM_FADERS; i++) {
     displayedVolumeChanged(i, "-80");
