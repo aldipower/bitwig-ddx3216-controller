@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "outDir": "./",
-    "target": "es2015",
+    "target": "es2017",
     "module": "commonjs",
     "checkJs": false,
     "allowJs": true,

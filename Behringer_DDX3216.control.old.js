@@ -343,3 +343,7 @@ function init() {
 
   println(`${VENDOR} ${EXTENSION_NAME} controller script version ${VERSION} written by ${AUTHOR} initialized. This script comes under GPLv3 license.`);
 }
+
+function exit() {
+    
+}
