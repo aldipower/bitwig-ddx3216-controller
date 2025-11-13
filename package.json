@@ -1,0 +1,23 @@
+{
+  "name": "bitwig-ddx3216-controller",
+  "version": "0.7.0",
+  "description": "Bitwig controller script for the Behringer DDX3216 mixer",
+  "main": "Behringer_DDX3216.control.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aldipower/bitwig-ddx3216-controller.git"
+  },
+  "author": "Felix Gertz",
+  "license": "GPL-3.0",
+  "bugs": {
+    "url": "https://github.com/aldipower/bitwig-ddx3216-controller/issues"
+  },
+  "homepage": "https://github.com/aldipower/bitwig-ddx3216-controller#readme",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

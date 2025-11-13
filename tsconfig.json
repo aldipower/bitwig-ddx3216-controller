@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "outDir": "./",
+    "target": "ES5",
+    "module": "CommonJS",
+    "checkJs": false,
+    "allowJs": true,
+    "moduleResolution": "node"
+  },
+  "include": ["./src/**/*.ts"],
+  "exclude": ["node_modules", "*.js"],
+  "types": [
+    "typed-bitwig-api"
+  ],
+}

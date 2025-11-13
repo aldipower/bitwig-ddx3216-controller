@@ -1,12 +1,7 @@
-// Bitwig Controller Script for Behringer DDX3216 (Updated)
-// TypeScript using typed-bitwig-api definitions (https://github.com/joslarson/typed-bitwig-api)
-// Changes in this version:
-// - Select buttons now open/close existing groups in Bitwig (instead of grouping/ungrouping tracks).
-//   When a group is opened, the visible tracks in Bitwig are reflected onto the physical DDX faders.
-// - Dynamic mapping: the faders always map to the tracks that are currently visible in Bitwig's mixer view
-//   (within the specified NUM_TRACKS window). When groups are opened/closed the mapping updates.
-// - Panning control added: map panner CCs to Bitwig pan parameters.
-// - Clear, editable CC base constants at the top so you can match your DDX mapping.
+const VENDOR = "Behringer";
+const EXTENSION_NAME = "DDX3216";
+const VERSION = "0.1-alpha";
+const AUTHOR = "Felix Gertz";
 
 // --- CONFIG
 const MIDI_CHANNEL = 0; // 0 == channel 1. Change if your desk sends on another channel.
@@ -23,41 +18,20 @@ const FEEDBACK_INTERVAL_MS = 200; // how often to push Bitwig state back to the 
 
 // --- Helpers
 function ccToIndex(controller, base) {
-    return controller - base; // zero-based index
+  return controller - base; // zero-based index
 }
 
 // --- Bitwig Host init
 loadAPI(19);
+host.defineController(VENDOR, EXTENSION_NAME, VERSION, "57fb8818-a6a6-4a23-9413-2a1a5aea3ce1", AUTHOR);
 host.setShouldFailOnDeprecatedUse(true);
+host.defineMidiPorts(1, 1);
+host.addDeviceNameBasedDiscoveryPair(["DDX3216"], ["DDX3216"]);
 
-const midiIn = host.getMidiInPort(0);
-const midiOut = host.getMidiOutPort(0);
-
-midiIn.setMidiCallback((status, data1, data2) => {
-    const msgType = status & 0xf0;
-    const chan = status & 0x0f;
-    if (chan !== MIDI_CHANNEL) return; // ignore other channels unless omni desired
-
-    if (msgType === 0xB0) { // Control Change
-        const cc = data1;
-        const val = data2;
-        handleCC(cc, val);
-    }
-    // SysEx could be handled here for higher resolution faders if you implement it
-});
-
-// Create a track bank representing the visible area of the mixer
-const trackBank = host.createMainTrackBank(NUM_FADERS, 0, 0);
-// Keep a cursor for global navigation/selection actions
-const cursorTrack = host.createCursorTrack(0, 0);
-
-// Enable parameter indication for feedback
-for (let i = 0; i < NUM_FADERS; i++) {
-    const t = trackBank.getItemAt(i);
-    t.getVolume().setIndication(true);
-    t.getPan().setIndication(true);
-    t.getMute().setIndication(true);
-}
+let midiIn;
+let midiOut;
+let trackBank;
+let cursorTrack;
 
 // Keep mapping of which Bitwig track corresponds to each physical fader index
 // Initially it is the trackBank items, but changes when the user scrolls / opens groups
@@ -178,25 +152,25 @@ function handleCC(cc, val) {
     }
 
     // Mutes
-    if (cc >= MUTE_CC_BASE && cc < MUTE_CC_BASE + NUM_FADERS) {
-        const idx = ccToIndex(cc, MUTE_CC_BASE);
-        setTrackMuteFromCC(idx, val);
-        return;
-    }
+    // if (cc >= MUTE_CC_BASE && cc < MUTE_CC_BASE + NUM_FADERS) {
+    //     const idx = ccToIndex(cc, MUTE_CC_BASE);
+    //     setTrackMuteFromCC(idx, val);
+    //     return;
+    // }
 
-    // Select (open/close group)
-    if (cc >= SELECT_CC_BASE && cc < SELECT_CC_BASE + NUM_FADERS) {
-        const idx = ccToIndex(cc, SELECT_CC_BASE);
-        if (val > 0) handleSelectPress(idx);
-        return;
-    }
+    // // Select (open/close group)
+    // if (cc >= SELECT_CC_BASE && cc < SELECT_CC_BASE + NUM_FADERS) {
+    //     const idx = ccToIndex(cc, SELECT_CC_BASE);
+    //     if (val > 0) handleSelectPress(idx);
+    //     return;
+    // }
 
-    // Pan
-    if (cc >= PAN_CC_BASE && cc < PAN_CC_BASE + NUM_FADERS) {
-        const idx = ccToIndex(cc, PAN_CC_BASE);
-        setTrackPanFromCC(idx, val);
-        return;
-    }
+    // // Pan
+    // if (cc >= PAN_CC_BASE && cc < PAN_CC_BASE + NUM_FADERS) {
+    //     const idx = ccToIndex(cc, PAN_CC_BASE);
+    //     setTrackPanFromCC(idx, val);
+    //     return;
+    // }
 }
 
 // --- Actions: set volume/mute/pan on the visible track corresponding to a fader index
@@ -204,14 +178,17 @@ function setTrackVolumeFromCC(faderIndex, ccValue) {
     const track = getVisibleTrackAt(faderIndex);
     if (!track) return;
     const norm = ccValue / 127.0; // 0..1
+
+    println(`${ccValue} ${norm}`)
     try {
-        track.getVolume().set(norm, 0);
+        track.volume().value().set(norm);
     } catch (e) {
+        println(`error setTrackVolumeFromCC ${e}`)
         // fallback: if API uses setRawValue
-        if (track.getVolume && track.getVolume().setRawValue) {
-            // @ts-ignore
-            track.getVolume().setRawValue(norm);
-        }
+        // if (track.getVolume && track.getVolume().setRawValue) {
+        //     // @ts-ignore
+        //     track.getVolume().setRawValue(norm);
+        // }
     }
 }
 
@@ -248,54 +225,121 @@ function setTrackPanFromCC(faderIndex, ccValue) {
     }
 }
 
+function sendVolumeChangeToMixer(faderIndex) {
+  const track = getVisibleTrackAt(faderIndex);
+
+  const ddxMin = -74;
+  const ddxMax = 12;
+  
+  // At 24bit
+  const bitwigMin = -132;
+  const bitwigMax = 6;
+
+  function mapBitwigDbToDdxDb(bitwigDb) {
+    return ((bitwigDb - bitwigMin) / (bitwigMax - bitwigMin)) * (ddxMax - ddxMin) + ddxMin;
+  }
+  
+  // Map DDX dB -> MIDI CC 0..127
+  function ddxDbToCc(ddxDb) {
+    const cc = Math.round(((ddxDb - ddxMin) / (ddxMax - ddxMin)) * 127);
+    return Math.max(0, Math.min(127, cc));
+  }
+
+  try {
+    const vol = track.volume().get();
+    // const volDb = track.volume().displayedValue().get();
+    // const volDb = vol * (bitwigMax - bitwigMin) + bitwigMin;
+    // const ddxDb = mapBitwigDbToDdxDb(volDb);
+    // const ccVal = ddxDbToCc(volDb);
+    const ccVal = Math.max(0, Math.min(127, Math.round((vol || 0) * 127)));
+
+    host.println(` Volume ${vol} ${ccVal}`) //  ${volDb}
+
+    midiOut.sendMidi(0xB0 | MIDI_CHANNEL, FADER_CC_BASE + faderIndex, ccVal);
+  } catch (e) {
+    host.errorln(`volume error: ${e}`);
+  }
+}
+
 // --- Feedback: send Bitwig state to the DDX3216 so the physical desk follows Bitwig's visible tracks
 function sendFeedbackForFader(faderIndex) {
     const track = getVisibleTrackAt(faderIndex);
     if (!track) return;
 
     // Volume
-    try {
-        const vol = track.getVolume().get(); // often 0..1
-        const ccVal = Math.max(0, Math.min(127, Math.round((vol || 0) * 127)));
-        midiOut.sendMidi(0xB0 | MIDI_CHANNEL, FADER_CC_BASE + faderIndex, ccVal);
-    } catch (e) {
-        // ignore
-    }
+    sendVolumeChangeToMixer(faderIndex);
 
     // Mute
-    try {
-        const muteParam = track.getMute();
-        const isMuted = (muteParam && typeof muteParam.get === 'function') ? !!muteParam.get() : false;
-        midiOut.sendMidi(0xB0 | MIDI_CHANNEL, MUTE_CC_BASE + faderIndex, isMuted ? 127 : 0);
-    } catch (e) {
-        // ignore
-    }
+    // try {
+    //     const muteParam = track.mute().get();
+    //     const isMuted = (muteParam && typeof muteParam.get === 'function') ? !!muteParam.get() : false;
+    //     midiOut.sendMidi(0xB0 | MIDI_CHANNEL, MUTE_CC_BASE + faderIndex, isMuted ? 127 : 0);
+    // } catch (e) {
+    //     host.errorln(`mute error: ${e}`);
+    // }
 
-    // Pan
-    try {
-        const panParam = track.getPan();
-        // Some APIs return -1..1, some 0..1. We'll try to normalize.
-        let panVal = 0.5;
-        if (panParam && typeof panParam.get === 'function') {
-            panVal = panParam.get();
-            if (panVal <= 1 && panVal >= -1) {
-                // convert -1..1 to 0..127
-                const ccVal = Math.round(((panVal + 1) / 2) * 127);
-                midiOut.sendMidi(0xB0 | MIDI_CHANNEL, PAN_CC_BASE + faderIndex, ccVal);
-            } else if (panVal >= 0 && panVal <= 1) {
-                const ccVal = Math.round(panVal * 127);
-                midiOut.sendMidi(0xB0 | MIDI_CHANNEL, PAN_CC_BASE + faderIndex, ccVal);
-            }
-        }
-    } catch (e) {
-        // ignore
-    }
+    // // Pan
+    // try {
+    //     const panParam = track.pan().get();
+    //     // Some APIs return -1..1, some 0..1. We'll try to normalize.
+    //     let panVal = 0.5;
+    //     if (panParam && typeof panParam.get === 'function') {
+    //         panVal = panParam.get();
+    //         if (panVal <= 1 && panVal >= -1) {
+    //             // convert -1..1 to 0..127
+    //             const ccVal = Math.round(((panVal + 1) / 2) * 127);
+    //             midiOut.sendMidi(0xB0 | MIDI_CHANNEL, PAN_CC_BASE + faderIndex, ccVal);
+    //         } else if (panVal >= 0 && panVal <= 1) {
+    //             const ccVal = Math.round(panVal * 127);
+    //             midiOut.sendMidi(0xB0 | MIDI_CHANNEL, PAN_CC_BASE + faderIndex, ccVal);
+    //         }
+    //     }
+    // } catch (e) {
+    //   host.errorln(`pan error: ${e}`);
+    // }
 }
 
-// Periodic task to refresh visible mapping and push feedback
-host.scheduleTask(() => {
+function init() {
+  midiIn = host.getMidiInPort(0);
+  midiOut = host.getMidiOutPort(0);
+  
+  midiIn.setMidiCallback((status, data1, data2) => {
+    const msgType = status & 0xf0;
+    const chan = status & 0x0f;
+    if (chan !== MIDI_CHANNEL) return; // ignore other channels unless omni desired
+
+    if (msgType === 0xB0) { // Control Change
+        const cc = data1;
+        const val = data2;
+        handleCC(cc, val);
+    }
+    // SysEx could be handled here for higher resolution faders if you implement it
+  });
+  
+  // Create a track bank representing the visible area of the mixer
+  trackBank = host.createMainTrackBank(NUM_FADERS, 0, 0);
+  // Keep a cursor for global navigation/selection actions
+  cursorTrack = host.createCursorTrack(0, 0);
+
+  // Enable parameter indication for feedback
+  for (let i = 0; i < NUM_FADERS; i++) {
+    const t = trackBank.getItemAt(i);
+    t.volume().setIndication(true);
+    t.volume().markInterested();
+    t.pan().setIndication(true);
+    t.pan().markInterested();
+    t.mute().markInterested();
+
+    t.volume().value().addValueObserver(() => {
+      sendVolumeChangeToMixer(i);
+    });
+  }
+
+  // Periodic task to refresh visible mapping and push feedback
+  host.scheduleTask(() => {
     refreshVisibleMapping();
     for (let i = 0; i < NUM_FADERS; i++) sendFeedbackForFader(i);
-}, FEEDBACK_INTERVAL_MS);
+  }, FEEDBACK_INTERVAL_MS);
 
-println('DDX3216 controller script (updated): Select opens/closes groups; visible tracks map to faders; panning enabled.');
+  println(`${VENDOR} ${EXTENSION_NAME} controller script version ${VERSION} written by ${AUTHOR} initialized. This script comes under GPLv3 license.`);
+}
