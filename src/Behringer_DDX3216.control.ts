@@ -4,9 +4,8 @@ const VERSION = "0.7.0";
 const AUTHOR = "Felix Gertz";
 
 const DEVICE_ID = 0x7f;
-const NUM_FADERS = 32;
+const NUM_FADERS = 66;
 
-const FADER_CC_BASE = 1; // CC 1..32 -> faders 1..32
 const MUTE_CC_BASE = 33; // CC 33..64 -> mute buttons 1..32
 const SELECT_CC_BASE = 65; // CC 65..96 -> select buttons 1..32 (used to open/close groups)
 const PAN_CC_BASE = 97; // CC 97..128 -> pan knobs for channels 1..32
@@ -33,6 +32,7 @@ let trackBank: API.TrackBank;
 let cursorTrack: API.CursorTrack;
 
 let midiChannelSetting: API.SettableRangedValue;
+let faderValueMappingSetting: API.SettableEnumValue;
 
 /* Helper */
 
@@ -85,6 +85,10 @@ function displayedVolumeChanged(
   faderIndex: number,
   bitwigDisplayValue: string
 ) {
+  if (faderValueMappingSetting.get() !== "exact") {
+    return;
+  }
+
   let dbVolume = parseFloat(bitwigDisplayValue);
   const isInf = bitwigDisplayValue.includes("Inf");
 
@@ -105,6 +109,20 @@ function displayedVolumeChanged(
   // midiOut.sendMidi(0xB0 | MIDI_CHANNEL, FADER_CC_BASE + faderIndex, ccVal);
 }
 
+function normalizedVolumeChanged(
+  faderIndex: number,
+  normalizedValue: number
+) {
+  if (faderValueMappingSetting.get() !== "full range") {
+    return;
+  }
+
+  const track = trackBank.getItemAt(faderIndex);
+  normalizedValue = track.volume().get();
+
+  sendSysExVolumeToMixer(faderIndex, 1472 * normalizedValue);
+}
+
 /* From DDX3216 */
 
 function dbToNormalized(db) {
@@ -120,26 +138,34 @@ function dbToNormalized(db) {
 
 function setBitwigFaderVolumeBySysexValue(
   faderIndex: number,
-  sysexVolume: number
+  sysexVolume: number,
+  settingsFaderValueMapping: string
 ) {
   try {
     const track = trackBank.getItemAt(faderIndex);
 
-    const dbValue = sysexVolume / 16 - 80;
-    const normalizedVolume = dbToNormalized(dbValue);
+    let normalizedVolume: number;
+
+    if (settingsFaderValueMapping === "exact") {
+      const dbValue = sysexVolume / 16 - 80;
+      normalizedVolume = dbToNormalized(dbValue);
+    } else {
+      normalizedVolume = sysexVolume / 1472;
+    }
 
     track.volume().setImmediately(normalizedVolume);
 
     lastFaderReceiveAction[faderIndex] = Date.now();
   } catch (error) {
-    errorln(`Could not set Bitwig fader volume by sysex ${error}`);
+    host.errorln(`Could not set Bitwig fader volume by sysex ${error}`);
   }
 }
 
 /* General control functions */
 
 function processIncomingSysex(sysexData: string) {
-  const setMidiChannel = getMidiChannel();
+  const settingsMidiChannel = getMidiChannel();
+  const settingsFaderValueMapping = faderValueMappingSetting.get();
 
   const regexp = /f0002032([0-F]{2})0b([0-F]{2})([0-F]{2})(.*)F7/gim;
 
@@ -149,13 +175,13 @@ function processIncomingSysex(sysexData: string) {
   const messages = messagesString.match(/.{1,8}/g);
 
   if (
-    setMidiChannel !== undefined &&
-    parseInt(midiChannel, 16) !== setMidiChannel
+    settingsMidiChannel !== undefined &&
+    parseInt(midiChannel, 16) !== settingsMidiChannel
   ) {
     println(
       `Incoming midi channel ${
         parseInt(midiChannel, 16) + 1
-      } does not match set channel ${setMidiChannel + 1}.`
+      } does not match set channel ${settingsMidiChannel + 1}.`
     );
     return;
   }
@@ -167,19 +193,19 @@ function processIncomingSysex(sysexData: string) {
   );
 
   if (parseInt(msgCount, 16) !== messages.length) {
-    errorln(`Message count does not match messages length`);
+    host.errorln(`Message count does not match messages length`);
   }
 
   // Function: Parameter change
   if (functionType === "20") {
     if (messages == null) {
-      errorln("messages is null");
+      host.errorln("messages is null");
       return;
     }
 
     messages.forEach((message, i) => {
       if (message == null) {
-        errorln("message is null");
+        host.errorln("message is null");
         return;
       }
 
@@ -204,16 +230,22 @@ function processIncomingSysex(sysexData: string) {
 
       // Volume
       if (functionCode === "01") {
-        setBitwigFaderVolumeBySysexValue(faderIndexInt, sysexValue);
+        setBitwigFaderVolumeBySysexValue(faderIndexInt, sysexValue, settingsFaderValueMapping);
       }
     });
   }
 }
 
-function init() {
+function createBitwigSettings() {
   midiChannelSetting = host
     .getPreferences()
-    .getNumberSetting("MIDI Channel (0 = omni)", "Connection", 0, 16, 1, "", 1);
+    .getNumberSetting("MIDI channel (0 = omni)", "Connection", 0, 16, 1, "", 1);
+  faderValueMappingSetting = host.getPreferences().getEnumSetting("dB mapping", "Fader", ["exact", "full range"], "exact");
+  host.getPreferences().getStringSetting("Developed by Felix Gertz", "Support", 128, "Support me via https://aldipower.bandcamp.com/album/das-reihenhaus and purchase the album. Thank you so much.")
+}
+
+function init() {
+  createBitwigSettings();
 
   midiIn = host.getMidiInPort(0);
   midiOut = host.getMidiOutPort(0);
@@ -235,10 +267,9 @@ function init() {
         displayedVolumeChanged(i, displayedValue);
       });
 
-    // NOPE
-    // t.volume().value().addRawValueObserver((value) => {
-    //   // sendVolumeChangeToMixer(i, value);
-    // });
+    t.volume().value().addRawValueObserver((value) => {
+      normalizedVolumeChanged(i, value);
+    });
   }
 
   midiIn.setSysexCallback((sysexData) => {
