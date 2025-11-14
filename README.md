@@ -48,6 +48,10 @@ If you enjoy the script, please purchase my music album on Bandcamp. It's also r
 [AldiPower on Bandcamp](https://aldipower.bandcamp.com/album/das-reihenhaus)
 Thank you so much.
 
+### Contribute
+
+Create an issues or better a PR here on GitHub, if you have something to fix or add.
+
 ### Credits & Disclaimer
 
 Thanks to the guys of [Typed Bitwig Api](https://github.com/joslarson/typed-bitwig-api), especially [Joseph Larson](https://github.com/joslarson), who made it possible to access the Bitwig API via TypeScript. Fantastic!

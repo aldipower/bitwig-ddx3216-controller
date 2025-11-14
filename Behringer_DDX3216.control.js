@@ -34,7 +34,8 @@ function constructSysEx(command) {
         .padStart(2, "0")}0B${command}F7`;
 }
 function getTrack(faderIndex) {
-    return faderIndex === MASTER_FADER_INDEX_L || faderIndex === MASTER_FADER_INDEX_L + 1
+    return faderIndex === MASTER_FADER_INDEX_L ||
+        faderIndex === MASTER_FADER_INDEX_L + 1
         ? masterTrack
         : faderIndex >= NUM_FADERS - 1 && faderIndex < NUM_FADERS - 1 + 16
             ? effectTrackBank.getItemAt(faderIndex - NUM_FADERS)
@@ -58,7 +59,7 @@ function sendSysExVolumeToMixer(faderIndex, sysExVolume) {
     const sysex = constructSysEx(command);
     midiOut.sendSysex(sysex);
 }
-// The displayed volume does reflect a dB value, 
+// The displayed volume does reflect a dB value,
 // so we can apply a proper dB mapping to the hardware faders.
 function displayedVolumeChanged(faderIndex, bitwigDisplayValue) {
     if (faderValueMappingSetting.get() !== "exact") {
@@ -78,7 +79,7 @@ function displayedVolumeChanged(faderIndex, bitwigDisplayValue) {
     const sysExVolume = Math.round((dbVolume + 80) * 16);
     sendSysExVolumeToMixer(faderIndex, sysExVolume);
 }
-// Bitwig's normalized volume is simply the floating range from 0 to 1 
+// Bitwig's normalized volume is simply the floating range from 0 to 1
 // and does not really reflect a dB value, but the faders physical position.
 function normalizedVolumeChanged(faderIndex, normalizedValue) {
     if (faderValueMappingSetting.get() !== "full range") {
@@ -161,6 +162,18 @@ function setBitwigFaderVolumeBySysexValue(faderIndex, sysexVolume, settingsFader
         host.errorln(`Could not set Bitwig fader volume by sysex ${error}`);
     }
 }
+function setBitwigSendVolume(faderIndex, sendIndex, sysexVolume) {
+    const track = getTrack(faderIndex);
+    const normalizedVolume = sysexVolume / 1472;
+    const sendItem = track.sendBank().getItemAt(sendIndex);
+    if (sendItem) {
+        if (!sendItem.isEnabled().getAsBoolean()) {
+            sendItem.isEnabled().set(true);
+            sendItem.set(0);
+        }
+        sendItem.set(normalizedVolume);
+    }
+}
 function setBitwigTrackMute(faderIndex, isMuted) {
     const track = getTrack(faderIndex);
     track.mute().set(isMuted);
@@ -186,6 +199,8 @@ function selectBitwigFaderAndCloseOpenGroup(faderIndex, groupIsOpen) {
     }
 }
 /* General control functions */
+// DDX: AUX1, AUX2, AUX3, AUX4, FX1, FX2, FX3, FX4
+const sendsFunctionCodes = ["46", "48", "4A", "4C", "50", "52", "54", "56"];
 function processIncomingSysex(sysexData) {
     const settingsMidiChannel = getMidiChannel();
     const settingsFaderValueMapping = faderValueMappingSetting.get();
@@ -220,6 +235,11 @@ function processIncomingSysex(sysexData) {
                 return;
             }
             const faderIndexInt = parseInt(faderIndex, 16);
+            const normalFader = NUM_FADERS + NUM_EFFECT_FADERS - 1;
+            if ((faderIndexInt > normalFader && faderIndexInt < MASTER_FADER_INDEX_L) ||
+                faderIndexInt > MASTER_FADER_INDEX_L + 1) {
+                return;
+            }
             // Volume
             if (functionCode === "01") {
                 setBitwigFaderVolumeBySysexValue(faderIndexInt, sysexValue, settingsFaderValueMapping);
@@ -235,6 +255,10 @@ function processIncomingSysex(sysexData) {
             }
             else if (functionCode === "04") {
                 selectBitwigFaderAndCloseOpenGroup(faderIndexInt, !sysexValue);
+                // Sends Aux1,2,3,4 Fx1,2,3,4
+            }
+            else if (sendsFunctionCodes.includes(functionCode.toUpperCase())) {
+                setBitwigSendVolume(faderIndexInt, sendsFunctionCodes.indexOf(functionCode.toUpperCase()), sysexValue);
             }
         });
     }
@@ -281,6 +305,10 @@ function registerObserver() {
         t.mute().addValueObserver((isMuted) => {
             sendSysExMuteToMixer(i, isMuted);
         });
+        for (let j = 0; j < NUM_EFFECT_FADERS; j++) {
+            const sendItem = t.sendBank().getItemAt(j);
+            sendItem.isEnabled().markInterested();
+        }
     }
     // Effect tracks
     for (let i = 0; i < NUM_EFFECT_FADERS; i++) {
@@ -306,6 +334,10 @@ function registerObserver() {
         t.mute().addValueObserver((isMuted) => {
             sendSysExMuteToMixer(NUM_FADERS + i, isMuted);
         });
+        for (let j = 0; j < NUM_EFFECT_FADERS; j++) {
+            const sendItem = t.sendBank().getItemAt(j);
+            sendItem.isEnabled().markInterested();
+        }
     }
     // Master track
     masterTrack.volume().markInterested();
@@ -339,8 +371,8 @@ function init() {
     createBitwigSettingsUI();
     midiIn = host.getMidiInPort(0);
     midiOut = host.getMidiOutPort(0);
-    trackBank = host.createMainTrackBank(NUM_FADERS, 0, 0);
-    effectTrackBank = host.createEffectTrackBank(8, 0, 0);
+    trackBank = host.createMainTrackBank(NUM_FADERS, NUM_EFFECT_FADERS, 0);
+    effectTrackBank = host.createEffectTrackBank(NUM_EFFECT_FADERS, NUM_EFFECT_FADERS, 0);
     masterTrack = host.createMasterTrack(0);
     // cursorTrack = host.createCursorTrack("cursor", "Cursor Track", 0, 0, true);
     registerObserver();
