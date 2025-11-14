@@ -246,7 +246,7 @@ function selectBitwigFaderAndCloseOpenGroup(faderIndex, groupIsOpen) {
 /* General control functions */
 // DDX: AUX1, AUX2, AUX3, AUX4, FX1, FX2, FX3, FX4
 const sendsFunctionCodes = ["46", "48", "4A", "4C", "50", "52", "54", "56"];
-const sendsPostPreFunctionCodes = ["47", "49", "4B", "4D"];
+const sendsPostPreFunctionCodes = ["47", "49", "4B", "4D", "51", "53", "55", "57"];
 function processIncomingSysex(sysexData) {
     const settingsMidiChannel = getMidiChannel();
     const settingsFaderValueMapping = faderValueMappingSetting.get();
@@ -255,7 +255,11 @@ function processIncomingSysex(sysexData) {
     const messages = messagesString.match(/.{1,8}/g);
     if (settingsMidiChannel !== undefined &&
         parseInt(midiChannel, 16) !== settingsMidiChannel) {
-        println(`Incoming midi channel ${parseInt(midiChannel, 16) + 1} does not match set channel ${settingsMidiChannel + 1}.`);
+        // println(
+        //   `Incoming midi channel ${
+        //     parseInt(midiChannel, 16) + 1
+        //   } does not match set channel ${settingsMidiChannel + 1}.`
+        // );
         return;
     }
     println(`Midi Channel: ${midiChannel} fnType: ${functionType} msgCount: ${msgCount} messages: ${messages.join("|")}`);
@@ -280,8 +284,23 @@ function processIncomingSysex(sysexData) {
             if (isNaN(sysexValue)) {
                 return;
             }
-            const faderIndexInt = parseInt(faderIndex, 16);
+            let faderIndexInt = parseInt(faderIndex, 16);
             const normalFader = NUM_FADERS + NUM_EFFECT_FADERS - 1;
+            // Map the FX1-4 mutes to the channels 5-8 on the FX tracks
+            if (functionCode === "02") {
+                if (faderIndexInt === normalFader + 1) {
+                    faderIndexInt = normalFader + 1 - 4;
+                }
+                else if (faderIndexInt === normalFader + 3) {
+                    faderIndexInt = normalFader + 3 - 5;
+                }
+                else if (faderIndexInt === normalFader + 5) {
+                    faderIndexInt = normalFader + 5 - 6;
+                }
+                else if (faderIndexInt === normalFader + 7) {
+                    faderIndexInt = normalFader + 7 - 7;
+                }
+            }
             if ((faderIndexInt > normalFader && faderIndexInt < MASTER_FADER_INDEX_L) ||
                 faderIndexInt > MASTER_FADER_INDEX_L + 1) {
                 return;
