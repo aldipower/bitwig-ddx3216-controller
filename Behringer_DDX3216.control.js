@@ -1,3 +1,13 @@
+/**
+ * Bitwig controller script for the Behringer DDX3216.
+ * https://github.com/aldipower/bitwig-ddx3216-controlle
+ *
+ * Author(s): Felix Gertz
+ * License: GPL 3.0
+ *
+ * If you like the controller script, please purchase my music album on
+ * https://aldipower.bandcamp.com/album/das-reihenhaus
+ */
 const VENDOR = "Behringer";
 const EXTENSION_NAME = "DDX3216";
 const VERSION = "0.7.0";
@@ -15,7 +25,6 @@ let midiOut;
 let trackBank;
 let effectTrackBank;
 let masterTrack;
-let cursorTrack;
 let midiChannelSetting;
 let faderValueMappingSetting;
 /* Helper */
@@ -226,7 +235,8 @@ function setBitwigTrackMute(faderIndex, isMuted) {
 function setBitwigFaderPanBySysexValue(faderIndex, sysexPan) {
     try {
         const track = getTrack(faderIndex);
-        if (faderIndex === MASTER_FADER_INDEX_L || faderIndex === MASTER_FADER_INDEX_L + 1) {
+        if (faderIndex === MASTER_FADER_INDEX_L ||
+            faderIndex === MASTER_FADER_INDEX_L + 1) {
             sysexPan = 60 - sysexPan;
         }
         const panValue = -1 + sysexPan / 30;
@@ -421,10 +431,6 @@ function registerObserver() {
         t.mute().addValueObserver((isMuted) => {
             sendSysExMuteToMixer(NUM_FADERS + i, isMuted);
         });
-        // for (let j = 0; j < NUM_EFFECT_FADERS; j++) {
-        //   const sendItem = t.sendBank().getItemAt(j);
-        //   sendItem.isEnabled().markInterested();
-        // }
     }
     // Master track
     masterTrack.volume().markInterested();
@@ -461,10 +467,11 @@ function init() {
     trackBank = host.createMainTrackBank(NUM_FADERS, NUM_EFFECT_FADERS, 0);
     effectTrackBank = host.createEffectTrackBank(NUM_EFFECT_FADERS, NUM_EFFECT_FADERS, 0);
     masterTrack = host.createMasterTrack(0);
-    // cursorTrack = host.createCursorTrack("cursor", "Cursor Track", 0, 0, true);
     registerObserver();
     midiIn.setSysexCallback((sysexData) => {
-        println(`Sysex received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`);
+        // println(
+        //   `Sysex received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`
+        // );
         if (!sysexData.startsWith("f0002032")) {
             return;
         }
