@@ -160,7 +160,7 @@ function toggleGroupStatus(faderIndex, isGroupExpanded) {
         if (rightPadding === 16) {
             rightPadding = 8;
         }
-        for (let i = trackCount; i < Math.min(NUM_FADERS, trackCount + rightPadding); i++) {
+        for (let i = faderIndex + 1; i < Math.min(NUM_FADERS, trackCount + rightPadding); i++) {
             resetFader(i);
         }
     }
@@ -246,7 +246,16 @@ function selectBitwigFaderAndCloseOpenGroup(faderIndex, groupIsOpen) {
 /* General control functions */
 // DDX: AUX1, AUX2, AUX3, AUX4, FX1, FX2, FX3, FX4
 const sendsFunctionCodes = ["46", "48", "4A", "4C", "50", "52", "54", "56"];
-const sendsPostPreFunctionCodes = ["47", "49", "4B", "4D", "51", "53", "55", "57"];
+const sendsPostPreFunctionCodes = [
+    "47",
+    "49",
+    "4B",
+    "4D",
+    "51",
+    "53",
+    "55",
+    "57",
+];
 function processIncomingSysex(sysexData) {
     const settingsMidiChannel = getMidiChannel();
     const settingsFaderValueMapping = faderValueMappingSetting.get();

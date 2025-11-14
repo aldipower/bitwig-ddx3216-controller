@@ -121,8 +121,13 @@ function normalizedVolumeChanged(faderIndex: number, normalizedValue: number) {
   sendSysExVolumeToMixer(faderIndex, 1472 * normalizedValue);
 }
 
-function sendSysExSendToMixer(faderIndex: number, sendIndex: number, sysExVolume: number) {
-  const lastActionTimestamp = lastSendReceiveAction[`${faderIndex}${sendIndex}`];
+function sendSysExSendToMixer(
+  faderIndex: number,
+  sendIndex: number,
+  sysExVolume: number
+) {
+  const lastActionTimestamp =
+    lastSendReceiveAction[`${faderIndex}${sendIndex}`];
 
   if (
     lastActionTimestamp != null &&
@@ -232,7 +237,7 @@ function toggleGroupStatus(faderIndex: number, isGroupExpanded: boolean) {
     }
 
     for (
-      let i = trackCount;
+      let i = faderIndex + 1;
       i < Math.min(NUM_FADERS, trackCount + rightPadding);
       i++
     ) {
@@ -358,7 +363,16 @@ function selectBitwigFaderAndCloseOpenGroup(
 
 // DDX: AUX1, AUX2, AUX3, AUX4, FX1, FX2, FX3, FX4
 const sendsFunctionCodes = ["46", "48", "4A", "4C", "50", "52", "54", "56"];
-const sendsPostPreFunctionCodes = ["47", "49", "4B", "4D", "51", "53", "55", "57"];
+const sendsPostPreFunctionCodes = [
+  "47",
+  "49",
+  "4B",
+  "4D",
+  "51",
+  "53",
+  "55",
+  "57",
+];
 
 function processIncomingSysex(sysexData: string) {
   const settingsMidiChannel = getMidiChannel();
@@ -429,14 +443,14 @@ function processIncomingSysex(sysexData: string) {
 
       // Map the FX1-4 mutes to the channels 5-8 on the FX tracks
       if (functionCode === "02") {
-        if (faderIndexInt === normalFader+1) {
-          faderIndexInt = normalFader+1-4;
-        } else if (faderIndexInt === normalFader+3) {
-          faderIndexInt = normalFader+3-5;
-        } else if (faderIndexInt === normalFader+5) {
-          faderIndexInt = normalFader+5-6;
-        } else if (faderIndexInt === normalFader+7) {
-          faderIndexInt = normalFader+7-7;
+        if (faderIndexInt === normalFader + 1) {
+          faderIndexInt = normalFader + 1 - 4;
+        } else if (faderIndexInt === normalFader + 3) {
+          faderIndexInt = normalFader + 3 - 5;
+        } else if (faderIndexInt === normalFader + 5) {
+          faderIndexInt = normalFader + 5 - 6;
+        } else if (faderIndexInt === normalFader + 7) {
+          faderIndexInt = normalFader + 7 - 7;
         }
       }
 
@@ -475,13 +489,15 @@ function processIncomingSysex(sysexData: string) {
           sysexValue
         );
         // Toggle Aux1,2,3,4 PRE/POST
-      } else if (sendsPostPreFunctionCodes.includes(functionCode.toUpperCase())) {
+      } else if (
+        sendsPostPreFunctionCodes.includes(functionCode.toUpperCase())
+      ) {
         setBitwigSendPrePost(
           faderIndexInt,
           sendsPostPreFunctionCodes.indexOf(functionCode.toUpperCase()),
           !sysexValue
         );
-      } 
+      }
     });
   }
 }
