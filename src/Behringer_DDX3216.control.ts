@@ -6,26 +6,12 @@ const AUTHOR = "Felix Gertz";
 const DEVICE_ID = 0x7f;
 const NUM_FADERS = 16 * 3;
 const NUM_EFFECT_FADERS = 8; // 8 on page 4 AUX/FX
-const MASTER_FADER_INDEX = 64;
-
-const SELECT_CC_BASE = 65; // CC 65..96 -> select buttons 1..32 (used to open/close groups)
+const MASTER_FADER_INDEX_L = 64;
 
 const FEEDBACK_INTERVAL_MS = 300;
 
 const lastFaderReceiveAction: Record<number, number> = {};
 const lastPanReceiveAction: Record<number, number> = {};
-
-loadAPI(24);
-host.defineController(
-  VENDOR,
-  EXTENSION_NAME,
-  VERSION,
-  "57fb8818-a6a6-4a23-9413-2a1a5aea3ce1",
-  AUTHOR
-);
-host.setShouldFailOnDeprecatedUse(true);
-host.defineMidiPorts(1, 1);
-host.addDeviceNameBasedDiscoveryPair(["DDX3216"], ["DDX3216"]);
 
 let midiIn: API.MidiIn;
 let midiOut: API.MidiOut;
@@ -58,7 +44,7 @@ function constructSysEx(command: string) {
 }
 
 function getTrack(faderIndex: number) {
-  return faderIndex === MASTER_FADER_INDEX
+  return faderIndex === MASTER_FADER_INDEX_L || faderIndex === MASTER_FADER_INDEX_L + 1
     ? masterTrack
     : faderIndex >= NUM_FADERS - 1 && faderIndex < NUM_FADERS - 1 + 16
     ? effectTrackBank.getItemAt(faderIndex - NUM_FADERS)
@@ -92,12 +78,12 @@ function sendSysExVolumeToMixer(faderIndex: number, sysExVolume: number) {
   midiOut.sendSysex(sysex);
 }
 
+// The displayed volume does reflect a dB value, 
+// so we can apply a proper dB mapping to the hardware faders.
 function displayedVolumeChanged(
   faderIndex: number,
   bitwigDisplayValue: string
 ) {
-  println(`Fader vol ${faderIndex} ${bitwigDisplayValue}`);
-
   if (faderValueMappingSetting.get() !== "exact") {
     return;
   }
@@ -120,6 +106,8 @@ function displayedVolumeChanged(
   sendSysExVolumeToMixer(faderIndex, sysExVolume);
 }
 
+// Bitwig's normalized volume is simply the floating range from 0 to 1 
+// and does not really reflect a dB value, but the faders physical position.
 function normalizedVolumeChanged(faderIndex: number, normalizedValue: number) {
   if (faderValueMappingSetting.get() !== "full range") {
     return;
@@ -164,10 +152,33 @@ function panChanged(faderIndex: number, value: number) {
     .toString(16)
     .padStart(2, "0")}03${high7bit}${low7bit}`.toUpperCase();
 
-  println(`pan changed s ${sysexValue}`);
-
   const sysex = constructSysEx(command);
   midiOut.sendSysex(sysex);
+}
+
+function toggleGroupStatus(faderIndex: number, isGroupExpanded: boolean) {
+  const trackCount = trackBank.itemCount().get() - 1;
+
+  if (trackCount <= 0) {
+    return;
+  }
+
+  if (!isGroupExpanded) {
+    let rightPadding = Math.max(8, 16 - (trackCount % 16));
+    if (rightPadding === 16) {
+      rightPadding = 8;
+    }
+
+    for (let i = trackCount; i < Math.min(NUM_FADERS, trackCount+rightPadding); i++) {
+      resetFader(i);
+    }
+  }
+}
+
+function resetFader(faderIndex: number) {
+  displayedVolumeChanged(faderIndex, "-80");
+  panChanged(faderIndex, 0);
+  sendSysExMuteToMixer(faderIndex, false);
 }
 
 /* From DDX3216 */
@@ -233,6 +244,9 @@ function selectBitwigFaderAndCloseOpenGroup(
 ) {
   const track: API.Track = trackBank.getItemAt(faderIndex);
   track.selectInEditor();
+
+  track.makeVisibleInArranger();
+  track.makeVisibleInMixer();
 
   if (track.isGroup()) {
     track.isGroupExpanded().set(groupIsOpen);
@@ -350,12 +364,19 @@ function createBitwigSettingsUI() {
 }
 
 function registerObserver() {
+  trackBank.itemCount().markInterested();
+
+  // Normal tracks
   for (let i = 0; i < NUM_FADERS; i++) {
     const t = trackBank.getItemAt(i);
     t.volume().markInterested();
     t.pan().markInterested();
     t.mute().markInterested();
     t.isGroupExpanded().markInterested();
+
+    t.isGroupExpanded().addValueObserver((isGroupExpanded) => {
+      toggleGroupStatus(i, isGroupExpanded);
+    });
 
     t.volume()
       .displayedValue()
@@ -369,6 +390,7 @@ function registerObserver() {
         normalizedVolumeChanged(i, value);
       });
 
+    // 33-48 won't see panning on the DDX
     t.pan()
       .value()
       .addRawValueObserver((value) => {
@@ -380,7 +402,7 @@ function registerObserver() {
     });
   }
 
-  // Effect faders
+  // Effect tracks
   for (let i = 0; i < NUM_EFFECT_FADERS; i++) {
     const t = effectTrackBank.getItemAt(i);
     t.volume().markInterested();
@@ -408,29 +430,44 @@ function registerObserver() {
     t.mute().addValueObserver((isMuted) => {
       sendSysExMuteToMixer(NUM_FADERS + i, isMuted);
     });
-  }
+  }  
 
+  // Master track
   masterTrack.volume().markInterested();
   masterTrack
     .volume()
     .displayedValue()
     .addValueObserver((displayedValue) => {
-      displayedVolumeChanged(MASTER_FADER_INDEX, displayedValue);
+      displayedVolumeChanged(MASTER_FADER_INDEX_L, displayedValue);
     });
   masterTrack
     .volume()
     .value()
     .addRawValueObserver((value) => {
-      normalizedVolumeChanged(MASTER_FADER_INDEX, value);
+      normalizedVolumeChanged(MASTER_FADER_INDEX_L, value);
     });
   masterTrack.pan().markInterested();
   masterTrack
     .pan()
     .value()
     .addRawValueObserver((value) => {
-      panChanged(MASTER_FADER_INDEX, value);
+      panChanged(MASTER_FADER_INDEX_L, value);
     });
 }
+
+/* Hooks and init */
+
+loadAPI(24);
+host.defineController(
+  VENDOR,
+  EXTENSION_NAME,
+  VERSION,
+  "57fb8818-a6a6-4a23-9413-2a1a5aea3ce1",
+  AUTHOR
+);
+host.setShouldFailOnDeprecatedUse(true);
+host.defineMidiPorts(1, 1);
+host.addDeviceNameBasedDiscoveryPair(["DDX3216"], ["DDX3216"]);
 
 function init() {
   createBitwigSettingsUI();
@@ -441,11 +478,7 @@ function init() {
   trackBank = host.createMainTrackBank(NUM_FADERS, 0, 0);
   effectTrackBank = host.createEffectTrackBank(8, 0, 0);
   masterTrack = host.createMasterTrack(0);
-  cursorTrack = host.createCursorTrack("cursor", "Cursor Track", 0, 0, true);
-
-  // TODO: Create proper scrolling to selected tracks
-  // trackBank = cursorTrack.createSiblingsTrackBank(NUM_FADERS, 0, 0, true, true);
-  // trackBank.cursorIndex().markInterested();
+  // cursorTrack = host.createCursorTrack("cursor", "Cursor Track", 0, 0, true);
 
   registerObserver();
 
@@ -466,11 +499,14 @@ function init() {
   );
 }
 
-// TODO: All faders
 function exit() {
   for (let i = 0; i < NUM_FADERS; i++) {
-    displayedVolumeChanged(i, "-80");
+    resetFader(i);
   }
+  for (let i = 0; i < NUM_EFFECT_FADERS; i++) {
+    resetFader(NUM_FADERS + i);
+  }
+  displayedVolumeChanged(MASTER_FADER_INDEX_L, "-12");
 }
 
 function flush() {}
