@@ -226,6 +226,9 @@ function setBitwigTrackMute(faderIndex, isMuted) {
 function setBitwigFaderPanBySysexValue(faderIndex, sysexPan) {
     try {
         const track = getTrack(faderIndex);
+        if (faderIndex === MASTER_FADER_INDEX_L || faderIndex === MASTER_FADER_INDEX_L + 1) {
+            sysexPan = 60 - sysexPan;
+        }
         const panValue = -1 + sysexPan / 30;
         track.pan().setRaw(panValue);
         lastPanReceiveAction[faderIndex] = Date.now();
