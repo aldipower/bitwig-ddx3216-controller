@@ -11,6 +11,7 @@ const MASTER_FADER_INDEX_L = 64;
 const FEEDBACK_INTERVAL_MS = 300;
 
 const lastFaderReceiveAction: Record<number, number> = {};
+const lastSendReceiveAction: Record<number, number> = {};
 const lastPanReceiveAction: Record<number, number> = {};
 
 let midiIn: API.MidiIn;
@@ -118,6 +119,66 @@ function normalizedVolumeChanged(faderIndex: number, normalizedValue: number) {
   normalizedValue = track.volume().get();
 
   sendSysExVolumeToMixer(faderIndex, 1472 * normalizedValue);
+}
+
+function sendSysExSendToMixer(faderIndex: number, sendIndex: number, sysExVolume: number) {
+  const lastActionTimestamp = lastSendReceiveAction[`${faderIndex}${sendIndex}`];
+
+  if (
+    lastActionTimestamp != null &&
+    Date.now() - FEEDBACK_INTERVAL_MS <= lastActionTimestamp
+  ) {
+    return;
+  }
+
+  const sendFunctionCode = sendsFunctionCodes[sendIndex];
+
+  if (sendFunctionCode == null) {
+    return;
+  }
+
+  const high7bit = ((sysExVolume >> 7) & 0x7f).toString(16).padStart(2, "0");
+  const low7bit = (sysExVolume & 0x7f).toString(16).padStart(2, "0");
+
+  // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX SEND_FUNCTION_CODE VALUE
+  const command = `2001${faderIndex
+    .toString(16)
+    .padStart(2, "0")}${sendFunctionCode}${high7bit}${low7bit}`.toUpperCase();
+
+  const sysex = constructSysEx(command);
+
+  midiOut.sendSysex(sysex);
+}
+
+function normalizedSendChanged(
+  faderIndex: number,
+  sendIndex: number,
+  normalizedValue: number
+) {
+  sendSysExSendToMixer(faderIndex, sendIndex, 1472 * normalizedValue);
+}
+
+function sendModeChanged(
+  faderIndex: number,
+  sendIndex: number,
+  sendMode: string
+) {
+  const sendModeFunctionCode = sendsPostPreFunctionCodes[sendIndex];
+
+  if (sendModeFunctionCode == null) {
+    return;
+  }
+
+  const mode = sendMode === "PRE" ? "0001" : "0000";
+
+  // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX SEND_FUNCTION_CODE VALUE
+  const command = `2001${faderIndex
+    .toString(16)
+    .padStart(2, "0")}${sendModeFunctionCode}${mode}`.toUpperCase();
+
+  const sysex = constructSysEx(command);
+
+  midiOut.sendSysex(sysex);
 }
 
 function sendSysExMuteToMixer(faderIndex: number, isMuted: boolean) {
@@ -235,11 +296,27 @@ function setBitwigSendVolume(
   const sendItem = track.sendBank().getItemAt(sendIndex);
 
   if (sendItem) {
+    // This enables the send - otherwise Bitwig stalls on them
     if (!sendItem.isEnabled().getAsBoolean()) {
       sendItem.isEnabled().set(true);
       sendItem.set(0);
     }
     sendItem.set(normalizedVolume);
+
+    lastSendReceiveAction[`${faderIndex}${sendIndex}`] = Date.now();
+  }
+}
+
+function setBitwigSendPrePost(
+  faderIndex: number,
+  sendIndex: number,
+  isPost: boolean
+) {
+  const track = getTrack(faderIndex);
+  const sendItem = track.sendBank().getItemAt(sendIndex);
+
+  if (sendItem) {
+    sendItem.sendMode().set(isPost ? "POST" : "PRE");
   }
 }
 
@@ -281,6 +358,7 @@ function selectBitwigFaderAndCloseOpenGroup(
 
 // DDX: AUX1, AUX2, AUX3, AUX4, FX1, FX2, FX3, FX4
 const sendsFunctionCodes = ["46", "48", "4A", "4C", "50", "52", "54", "56"];
+const sendsPostPreFunctionCodes = ["47", "49", "4B", "4D"];
 
 function processIncomingSysex(sysexData: string) {
   const settingsMidiChannel = getMidiChannel();
@@ -383,7 +461,14 @@ function processIncomingSysex(sysexData: string) {
           sendsFunctionCodes.indexOf(functionCode.toUpperCase()),
           sysexValue
         );
-      }
+        // Toggle Aux1,2,3,4 PRE/POST
+      } else if (sendsPostPreFunctionCodes.includes(functionCode.toUpperCase())) {
+        setBitwigSendPrePost(
+          faderIndexInt,
+          sendsPostPreFunctionCodes.indexOf(functionCode.toUpperCase()),
+          !sysexValue
+        );
+      } 
     });
   }
 }
@@ -448,6 +533,14 @@ function registerObserver() {
     for (let j = 0; j < NUM_EFFECT_FADERS; j++) {
       const sendItem = t.sendBank().getItemAt(j);
       sendItem.isEnabled().markInterested();
+
+      sendItem.value().addRawValueObserver((value) => {
+        normalizedSendChanged(i, j, value);
+      });
+
+      sendItem.sendMode().addValueObserver((value) => {
+        sendModeChanged(i, j, value);
+      });
     }
   }
 
@@ -480,10 +573,10 @@ function registerObserver() {
       sendSysExMuteToMixer(NUM_FADERS + i, isMuted);
     });
 
-    for (let j = 0; j < NUM_EFFECT_FADERS; j++) {
-      const sendItem = t.sendBank().getItemAt(j);
-      sendItem.isEnabled().markInterested();
-    }
+    // for (let j = 0; j < NUM_EFFECT_FADERS; j++) {
+    //   const sendItem = t.sendBank().getItemAt(j);
+    //   sendItem.isEnabled().markInterested();
+    // }
   }
 
   // Master track
