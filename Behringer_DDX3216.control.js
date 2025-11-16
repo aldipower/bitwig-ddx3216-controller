@@ -20,6 +20,7 @@ const FEEDBACK_INTERVAL_MS = 300;
 const lastFaderReceiveAction = {};
 const lastSendReceiveAction = {};
 const lastPanReceiveAction = {};
+const lastDeviceReceiveAction = {};
 let midiIn;
 let midiOut;
 let trackBank;
@@ -211,23 +212,21 @@ function resetFader(faderIndex) {
     panChanged(faderIndex, 0);
     sendSysExMuteToMixer(faderIndex, false);
 }
-function sendSysExEQToMixer(faderIndex, bandCode, sysExValue) {
-    if (!bandCode) {
+function sendSysExEQToMixer(faderIndex, fnCode, sysExValue) {
+    if (!fnCode) {
         return;
     }
-    // const lastActionTimestamp = lastFaderReceiveAction[faderIndex];
-    // if (
-    //   lastActionTimestamp != null &&
-    //   Date.now() - FEEDBACK_INTERVAL_MS <= lastActionTimestamp
-    // ) {
-    //   return;
-    // }
+    const lastActionTimestamp = lastDeviceReceiveAction[`${faderIndex}${fnCode}`];
+    if (lastActionTimestamp != null &&
+        Date.now() - FEEDBACK_INTERVAL_MS <= lastActionTimestamp) {
+        return;
+    }
     const high7bit = ((sysExValue >> 7) & 0x7f).toString(16).padStart(2, "0");
     const low7bit = (sysExValue & 0x7f).toString(16).padStart(2, "0");
     // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX FUNCTION_CODE VALUE
     const command = `2001${faderIndex
         .toString(16)
-        .padStart(2, "0")}${bandCode}${high7bit}${low7bit}`.toUpperCase();
+        .padStart(2, "0")}${fnCode}${high7bit}${low7bit}`.toUpperCase();
     const sysex = constructSysEx(command);
     println(`sysex ${sysex}`);
     midiOut.sendSysex(sysex);
@@ -382,6 +381,19 @@ function selectBitwigFaderAndCloseOpenGroup(faderIndex, groupIsOpen) {
         track.isGroupExpanded().set(groupIsOpen);
     }
 }
+function setBitwigEQisEnabled(faderIndex, isEnabled) {
+    const track = getTrack(faderIndex);
+    // const deviceBank = track.createDeviceBank(8);
+    // for (let j = 0; j < 8; j++) {
+    //   // const eq5Params = { ...eq5ParamsTemplate };
+    //   const device = deviceBank.getItemAt(j);
+    //   if (device.name().get().startsWith("DDX EQ-5")) {
+    //     device.isEnabled().set(isEnabled);
+    //     lastDeviceReceiveAction[`${faderIndex}14`] = Date.now();
+    //     break;
+    //   }
+    // }
+}
 /* General control functions */
 // DDX: AUX1, AUX2, AUX3, AUX4, FX1, FX2, FX3, FX4
 const sendsFunctionCodes = ["46", "48", "4A", "4C", "50", "52", "54", "56"];
@@ -476,6 +488,10 @@ function processIncomingSysex(sysexData) {
             }
             else if (sendsPostPreFunctionCodes.includes(functionCode.toUpperCase())) {
                 setBitwigSendPrePost(faderIndexInt, sendsPostPreFunctionCodes.indexOf(functionCode.toUpperCase()), !sysexValue);
+                // EQ on/off
+            }
+            else if (functionCode === "14") {
+                setBitwigEQisEnabled(faderIndexInt, !!sysexValue);
             }
         });
     }
@@ -491,6 +507,11 @@ function createBitwigSettingsUI() {
         .getPreferences()
         .getStringSetting("Developed by Felix Gertz", "Support", 128, "Support me via https://aldipower.bandcamp.com/album/das-reihenhaus and purchase the album. Thank you so much.");
 }
+// { "EQ-2", "01af068e-1e49-4777-a6e6-7f1dc679227a" },
+// { "Gate", "556300ac-3a6e-4423-966a-5d5dde459a1b" },
+// { "Compressor", "2b1b4787-8d74-4138-877b-9197209eef0f" },
+// { "EQ-5" },
+// { "Delay-1", "2a7a7328-3f7a-4afb-95eb-5230c298bb90" },
 function registerObserver() {
     trackBank.itemCount().markInterested();
     // Normal tracks
@@ -533,14 +554,19 @@ function registerObserver() {
             device.name().addValueObserver((name) => {
                 // println(`${i}-${j} NAME ${name}`);
                 if (name.startsWith("DDX EQ-5")) {
+                    // TRACK POSITIONS OF DEVICE HERE
                     host.scheduleTask(() => {
+                        sendSysExEQToMixer(i, "14", device.isEnabled().getAsBoolean() ? 1 : 0);
                         Object.entries(eq5Params).forEach(([eqParamKey, eqParam]) => {
-                            println(`BY NAME CHANGE ${i}-${j} ${eqParamKey} "${eqParam.name().get()}" ${eqParam.displayedValue().get()} ${eqParam.value().get()}`);
+                            // println(
+                            //   `BY NAME CHANGE ${i}-${j} ${eqParamKey} "${eqParam.name().get()}" ${eqParam.displayedValue().get()} ${eqParam.value().get()}`
+                            // );
                             sendEQParamToDDX(i, eqParamKey, eqParam.displayedValue().get(), eqParam.value().get());
                         });
                     }, 0);
                 }
                 else {
+                    // TRACK POSITIONS OF DEVICE HERE
                     // Object.entries(eq5Params).forEach(([eqParamKey, eqParam]) => {
                     //   println(`IN NAME RESET ${eqParamKey} ${eqParam.value().get()} ${eqParam.displayedValue().get()}`);
                     //   if (eqParam.value().get()) {
@@ -556,12 +582,14 @@ function registerObserver() {
                 param.value().markInterested();
                 param.displayedValue().addValueObserver((value) => {
                     if (device.name().get().startsWith("DDX EQ-5")) {
+                        // TRACK POSITIONS OF DEVICE HERE
                         println(`DD ${i}-${j} ${eqParamKey} "${param.name().get()}" ${param
                             .displayedValue()
                             .get()} ${param.value().get()}`);
                         sendEQParamToDDX(i, eqParamKey, param.displayedValue().get(), param.value().get());
                     }
                     else {
+                        // TRACK POSITIONS OF DEVICE HERE
                         // println(`IN VALUE RESET ${eqParamKey} ${param.value().get()} ${param.displayedValue().get()}`);
                         // if (param.value().get()) {
                         //   sendEQParamToDDX(i, eqParamKey, "-0.0");
@@ -569,6 +597,13 @@ function registerObserver() {
                     }
                 });
                 eq5Params[eqParamKey] = param;
+            });
+            device.isEnabled().markInterested();
+            device.isEnabled().addValueObserver((isEnabled) => {
+                if (device.name().get().startsWith("DDX EQ-5")) {
+                    println(`${i}-${j} isENABLED ${isEnabled}`);
+                    sendSysExEQToMixer(i, "14", isEnabled ? 1 : 0);
+                }
             });
             // device.addDirectParameterIdObserver((ids) => {
             //   println(`faderIndex ${i} deviceIndex ${j} ids ${JSON.stringify(ids)}`);
