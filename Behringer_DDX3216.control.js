@@ -38,9 +38,16 @@ var BitwigDeviceIds;
     BitwigDeviceIds["Delay-1"] = "2a7a7328-3f7a-4afb-95eb-5230c298bb90";
 })(BitwigDeviceIds || (BitwigDeviceIds = {}));
 ;
+const DDXDeviceNames = {
+    [BitwigDeviceIds["EQ-2"]]: "DDX HIGH PASS",
+    [BitwigDeviceIds["Gate"]]: "DDX GATE",
+    [BitwigDeviceIds["Compressor"]]: "DDX COMPRESSOR",
+    [BitwigDeviceIds["EQ-5"]]: "DDX EQ",
+    [BitwigDeviceIds["Delay-1"]]: "DDX DELAY",
+};
 const deviceList = {};
 function setDevice(faderIndex, deviceIndex, deviceId, device, params) {
-    println(`setDevice at ${faderIndex} ${deviceIndex} deviceId ${deviceId}`);
+    // println(`setDevice at ${faderIndex} ${deviceIndex} deviceId ${deviceId}`)
     if (deviceList[faderIndex] == null) {
         deviceList[faderIndex] = {};
     }
@@ -60,6 +67,9 @@ function getFirstDeviceById(faderIndex, deviceId) {
         deviceId: undefined,
         params: undefined,
     };
+}
+function isDevice(name, deviceId) {
+    return name.toUpperCase().startsWith(DDXDeviceNames[deviceId]);
 }
 // This is reverse to Bitwig - Highest band on the DDX is index 0
 const ddxEq5FnCodeMap = {
@@ -94,10 +104,15 @@ const eq5ParamsTemplate = {
     ENABLE3: null,
     ENABLE4: null,
     ENABLE5: null,
-    // "OUTPUT_GAIN": null,
-    // "GLOBAL_AMOUNT": null,
-    // "GLOBAL_SHIFT": null,
-    // "SPECTRUM_SELECTOR": null,
+};
+const ddxEq2FnCodeMap = {
+    freq: ["26", ""],
+};
+const eq2ParamsTemplate = {
+    LO_GAIN: null,
+    LO_FREQ: null,
+    LO_Q: null,
+    TYPE1: null,
 };
 /* Helper */
 function getMidiChannel() {
@@ -268,8 +283,27 @@ function sendSysExEQToMixer(faderIndex, fnCode, sysExValue) {
         .toString(16)
         .padStart(2, "0")}${fnCode}${high7bit}${low7bit}`.toUpperCase();
     const sysex = constructSysEx(command);
-    println(`sysex ${sysex}`);
     midiOut.sendSysex(sysex);
+}
+function sendHighPassParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
+    const bandIndex = eqParamKey === "LO_FREQ" ? 0 : -1;
+    if (isNaN(bandIndex) || bandIndex < 0 || bandIndex > 1) {
+        return;
+    }
+    let freq = displayedValue ? parseFloat(displayedValue) : 0;
+    freq *= displayedValue.includes("kHz") ? 1000 : 1;
+    if (!freq || isNaN(freq)) {
+        return;
+    }
+    if (freq > 400) {
+        freq = 400;
+    }
+    else if (freq < 4) {
+        freq = 4;
+    }
+    const sysExFreq = Math.round(80 * Math.log(freq / 4) / Math.log(100));
+    const bandFreqFnCodes = ddxEq2FnCodeMap.freq;
+    sendSysExEQToMixer(faderIndex, bandFreqFnCodes[bandIndex], sysExFreq);
 }
 function sendEQParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
     const bandIndex = Number(eqParamKey.slice(-1)) - 1;
@@ -412,6 +446,37 @@ function selectBitwigFaderAndCloseOpenGroup(faderIndex, groupIsOpen) {
     track.makeVisibleInMixer();
     if (track.isGroup()) {
         track.isGroupExpanded().set(groupIsOpen);
+    }
+}
+/// EQ-2
+function setBitwigHighPassIsEnabled(faderIndex, isEnabled) {
+    const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds["EQ-2"]);
+    if (device) {
+        device.isEnabled().set(isEnabled);
+        lastDeviceReceiveAction[`${faderIndex}25`] = Date.now();
+    }
+}
+function setBitwigHighPassFreq(faderIndex, fnCode, sysexValue) {
+    const bandIndex = ddxEq2FnCodeMap.freq.indexOf(fnCode);
+    if (bandIndex < 0) {
+        return;
+    }
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds["EQ-2"]);
+    if (device) {
+        let freq = 4 * Math.pow(100, sysexValue / 80);
+        if (freq > 20000) {
+            freq = 20000;
+        }
+        else if (freq < 20) {
+            freq = 20;
+        }
+        const param = params[`LO_FREQ`];
+        param.setImmediately(freqToNormalized(freq));
+        const paramType = params[`TYPE1`];
+        paramType.setImmediately(1 / 3);
+        const paramQ = params[`LO_Q`];
+        paramQ.setImmediately(qToNormalized(0.71));
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
     }
 }
 /// EQ-5
@@ -610,6 +675,13 @@ function processIncomingSysex(sysexData) {
             }
             else if (ddxEq5FnCodeMap.type.includes(functionCode.toUpperCase())) {
                 setBitwigEQType(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+                // High Pass on/off
+            }
+            else if (functionCode === "25") {
+                setBitwigHighPassIsEnabled(faderIndexInt, !!sysexValue);
+            }
+            else if (ddxEq2FnCodeMap.freq.includes(functionCode.toUpperCase())) {
+                setBitwigHighPassFreq(faderIndexInt, functionCode.toUpperCase(), sysexValue);
             }
         });
     }
@@ -617,62 +689,73 @@ function processIncomingSysex(sysexData) {
 function setupDeviceBank(faderIndex, track) {
     const deviceBank = track.createDeviceBank(8);
     for (let j = 0; j < 8; j++) {
-        const eq5Params = Object.assign({}, eq5ParamsTemplate);
         const device = deviceBank.getItemAt(j);
-        const bitwigDevice_EQ5 = device.createSpecificBitwigDevice(
-        // @ts-expect-error
-        java.util.UUID.fromString(BitwigDeviceIds["EQ-5"]));
+        const params = {
+            [BitwigDeviceIds["EQ-2"]]: Object.assign({}, eq2ParamsTemplate),
+            [BitwigDeviceIds["EQ-5"]]: Object.assign({}, eq5ParamsTemplate),
+        };
+        const bitwigDevices = {
+            [BitwigDeviceIds["EQ-2"]]: device.createSpecificBitwigDevice(
+            // @ts-expect-error
+            java.util.UUID.fromString(BitwigDeviceIds["EQ-2"])),
+            [BitwigDeviceIds["EQ-5"]]: device.createSpecificBitwigDevice(
+            // @ts-expect-error
+            java.util.UUID.fromString(BitwigDeviceIds["EQ-5"])),
+        };
         device.name().markInterested();
         device.name().addValueObserver((name) => {
             // println(`${i}-${j} NAME ${name}`);
-            if (name.startsWith("DDX EQ-5")) {
-                setDevice(faderIndex, j, BitwigDeviceIds["EQ-5"], device, eq5Params);
+            if (isDevice(name, BitwigDeviceIds["EQ-5"])) {
+                setDevice(faderIndex, j, BitwigDeviceIds["EQ-5"], device, params[BitwigDeviceIds["EQ-5"]]);
                 host.scheduleTask(() => {
                     sendSysExEQToMixer(faderIndex, "14", device.isEnabled().getAsBoolean() ? 1 : 0);
-                    Object.entries(eq5Params).forEach(([eqParamKey, eqParam]) => {
-                        // println(
-                        //   `BY NAME CHANGE ${faderIndex}-${j} ${eqParamKey} "${eqParam.name().get()}" ${eqParam.displayedValue().get()} ${eqParam.value().get()}`
-                        // );
+                    Object.entries(params[BitwigDeviceIds["EQ-5"]]).forEach(([eqParamKey, eqParam]) => {
                         sendEQParamToDDX(faderIndex, eqParamKey, eqParam.displayedValue().get(), eqParam.value().get());
+                    });
+                }, 0);
+            }
+            else if (isDevice(name, BitwigDeviceIds["EQ-2"])) {
+                setDevice(faderIndex, j, BitwigDeviceIds["EQ-2"], device, params[BitwigDeviceIds["EQ-2"]]);
+                host.scheduleTask(() => {
+                    sendSysExEQToMixer(faderIndex, "25", device.isEnabled().getAsBoolean() ? 1 : 0);
+                    Object.entries(params[BitwigDeviceIds["EQ-2"]]).forEach(([eqParamKey, eqParam]) => {
+                        sendHighPassParamToDDX(faderIndex, eqParamKey, eqParam.displayedValue().get(), eqParam.value().get());
                     });
                 }, 0);
             }
             else {
                 setDevice(faderIndex, j, undefined);
-                // Object.entries(eq5Params).forEach(([eqParamKey, eqParam]) => {
-                //   println(`IN NAME RESET ${eqParamKey} ${eqParam.value().get()} ${eqParam.displayedValue().get()}`);
-                //   if (eqParam.value().get()) {
-                //     sendEQParamToDDX(i, eqParamKey, "-0.0");
-                //   }
-                // });
             }
         });
-        Object.keys(eq5Params).forEach((eqParamKey) => {
-            const param = bitwigDevice_EQ5.createParameter(eqParamKey);
-            param.name().markInterested();
-            param.displayedValue().markInterested();
-            param.value().markInterested();
-            param.displayedValue().addValueObserver((value) => {
-                if (device.name().get().startsWith("DDX EQ-5")) {
-                    println(`DD ${faderIndex}-${j} ${eqParamKey} "${param.name().get()}" ${param
-                        .displayedValue()
-                        .get()} ${param.value().get()}`);
-                    sendEQParamToDDX(faderIndex, eqParamKey, param.displayedValue().get(), param.value().get());
-                }
-                else {
-                    // println(`IN VALUE RESET ${eqParamKey} ${param.value().get()} ${param.displayedValue().get()}`);
-                    // if (param.value().get()) {
-                    //   sendEQParamToDDX(faderIndex, eqParamKey, "-0.0");
-                    // }
-                }
+        Object.entries(params).forEach(([deviceId, specificParams]) => {
+            Object.keys(specificParams).forEach((paramKey) => {
+                const param = bitwigDevices[deviceId].createParameter(paramKey);
+                param.name().markInterested();
+                param.displayedValue().markInterested();
+                param.value().markInterested();
+                param.displayedValue().addValueObserver((value) => {
+                    if (isDevice(device.name().get(), BitwigDeviceIds["EQ-5"])) {
+                        // println(
+                        //   `DD ${faderIndex}-${j} ${paramKey} "${param.name().get()}" ${param
+                        //     .displayedValue()
+                        //     .get()} ${param.value().get()}`
+                        // );
+                        sendEQParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
+                    }
+                    else if (isDevice(device.name().get(), BitwigDeviceIds["EQ-2"])) {
+                        sendHighPassParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
+                    }
+                });
+                specificParams[paramKey] = param;
             });
-            eq5Params[eqParamKey] = param;
         });
         device.isEnabled().markInterested();
         device.isEnabled().addValueObserver((isEnabled) => {
-            if (device.name().get().startsWith("DDX EQ-5")) {
-                println(`${faderIndex}-${j} isENABLED ${isEnabled}`);
+            if (isDevice(device.name().get(), BitwigDeviceIds["EQ-5"])) {
                 sendSysExEQToMixer(faderIndex, "14", isEnabled ? 1 : 0);
+            }
+            else if (isDevice(device.name().get(), BitwigDeviceIds["EQ-2"])) {
+                sendSysExEQToMixer(faderIndex, "25", isEnabled ? 1 : 0);
             }
         });
         // device.addDirectParameterIdObserver((ids) => {
