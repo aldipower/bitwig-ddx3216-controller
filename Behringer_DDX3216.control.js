@@ -114,6 +114,26 @@ const eq2ParamsTemplate = {
     LO_Q: null,
     TYPE1: null,
 };
+const ddxGateCodeMap = {
+    ATTACK: "34",
+    RELEASE: "35",
+    DEPTH: "36", // DDX Range
+    THRESHOLD_LEVEL: "37",
+};
+const gateParamsTemplate = {
+    ATTACK: null,
+    RELEASE: null,
+    DEPTH: null,
+    THRESHOLD_LEVEL: null,
+};
+function getParamKeyByFnCode(map, fnCode) {
+    for (const [key, value] of Object.entries(map)) {
+        if (value === fnCode) {
+            return key;
+        }
+    }
+    return null;
+}
 /* Helper */
 function getMidiChannel() {
     const midiChannel = midiChannelSetting.getRaw() - 1;
@@ -266,8 +286,7 @@ function resetFader(faderIndex) {
     panChanged(faderIndex, 0);
     sendSysExMuteToMixer(faderIndex, false);
 }
-//// EQ-5
-function sendSysExEQToMixer(faderIndex, fnCode, sysExValue) {
+function sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue) {
     if (!fnCode) {
         return;
     }
@@ -285,6 +304,7 @@ function sendSysExEQToMixer(faderIndex, fnCode, sysExValue) {
     const sysex = constructSysEx(command);
     midiOut.sendSysex(sysex);
 }
+//// from EQ-2
 function sendHighPassParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
     const bandIndex = eqParamKey === "LO_FREQ" ? 0 : -1;
     if (isNaN(bandIndex) || bandIndex < 0 || bandIndex > 1) {
@@ -302,10 +322,10 @@ function sendHighPassParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
         freq = 4;
     }
     const sysExFreq = Math.round(80 * Math.log(freq / 4) / Math.log(100));
-    const bandFreqFnCodes = ddxEq2FnCodeMap.freq;
-    sendSysExEQToMixer(faderIndex, bandFreqFnCodes[bandIndex], sysExFreq);
+    sendSysExDeviceToMixer(faderIndex, ddxEq2FnCodeMap.freq[bandIndex], sysExFreq);
 }
-function sendEQParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
+//// from EQ-5
+function sendEQ5ParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
     const bandIndex = Number(eqParamKey.slice(-1)) - 1;
     if (isNaN(bandIndex) || bandIndex < 0 || bandIndex > 4) {
         return;
@@ -327,10 +347,9 @@ function sendEQParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
             freq = 20;
         }
         const sysExFreq = Math.round(159 * (Math.log(freq / 20) / Math.log(1000)));
-        const bandFreqFnCodes = ddxEq5FnCodeMap.freq;
-        sendSysExEQToMixer(faderIndex, bandFreqFnCodes[bandIndex], sysExFreq);
+        sendSysExDeviceToMixer(faderIndex, ddxEq5FnCodeMap.freq[bandIndex], sysExFreq);
     }
-    if (eqParamKey.startsWith("Q")) {
+    else if (eqParamKey.startsWith("Q")) {
         let qValue = displayedValue ? parseFloat(displayedValue) : 0;
         const isInf = displayedValue.includes("Inf");
         if (!isInf && isNaN(qValue)) {
@@ -343,9 +362,9 @@ function sendEQParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
             qValue = 0.1;
         }
         const sysExQ = Math.round(20 * Math.log10(qValue / 0.1));
-        sendSysExEQToMixer(faderIndex, ddxEq5FnCodeMap.q[bandIndex], sysExQ);
+        sendSysExDeviceToMixer(faderIndex, ddxEq5FnCodeMap.q[bandIndex], sysExQ);
     }
-    if (eqParamKey.startsWith("TYPE") && (bandIndex === 0 || bandIndex === 4)) {
+    else if (eqParamKey.startsWith("TYPE") && (bandIndex === 0 || bandIndex === 4)) {
         let filterType = 0; // DDX: Param
         if (value < 0.4 && value >= 0) {
             filterType = 1; // DDX: LC
@@ -353,9 +372,9 @@ function sendEQParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
         else if (value === 1) {
             filterType = 2; // DDX: LSh
         }
-        sendSysExEQToMixer(faderIndex, ddxEq5FnCodeMap.type[bandIndex], filterType);
+        sendSysExDeviceToMixer(faderIndex, ddxEq5FnCodeMap.type[bandIndex], filterType);
     }
-    if (eqParamKey.startsWith("GAIN")) {
+    else if (eqParamKey.startsWith("GAIN")) {
         let dbVolume = displayedValue ? parseFloat(displayedValue) : 0;
         const isInf = displayedValue.includes("Inf");
         if (!isInf && isNaN(dbVolume)) {
@@ -368,7 +387,92 @@ function sendEQParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
             dbVolume = 18;
         }
         const sysExVolume = Math.round((dbVolume + 18) * 2);
-        sendSysExEQToMixer(faderIndex, ddxEq5FnCodeMap.gain[bandIndex], sysExVolume);
+        sendSysExDeviceToMixer(faderIndex, ddxEq5FnCodeMap.gain[bandIndex], sysExVolume);
+    }
+}
+function sendGateParamToDDX(faderIndex, gateParamKey, displayedValue, value) {
+    const fnCode = ddxGateCodeMap[gateParamKey];
+    if (fnCode == null) {
+        return;
+    }
+    // ATTACK 0.10 ms 0
+    // ATTACK 0.91 ms 0.31999999999999984
+    // ATTACK 3.16 ms 0.5
+    // ATTACK 100 ms 1
+    // DDX 0ms - 200ms
+    // RELEASE 1.00 ms 0
+    // RELEASE 5.82 ms 0.2550000000000005
+    // RELEASE 31.6 ms 0.49999999999999933
+    // RELEASE 1.00 s 1
+    // DDX 20ms - 5s
+    // DEPTH 0 dB 0
+    // DEPTH +60 dB 0.5
+    // DEPTH +120 dB 1
+    // DDX 0db - -60db - Inf
+    // -Inf , -144db, 0db
+    // THRESHOLD_LEVEL -10.0 dB 0.6800000000000005
+    // THRESHOLD_LEVEL -40.1 dB 0.21500000000000008
+    // DDX -90dB - 0dB
+    // -Inf dB 0
+    // -144 dB 0.004
+    // -120 dB 0.01000000000000001
+    // -60.0 dB 0.1000000000000001
+    // -20.0 dB 0.464400000000001
+    // -10.0 dB 0.6820000000000026
+    // -6.0 dB 0.7940000000000018
+    // 0 dB 1
+    if (gateParamKey === "ATTACK") {
+        let ms = displayedValue ? parseFloat(displayedValue) : 0;
+        if (!displayedValue.includes("ms") && displayedValue.includes("s")) {
+            ms *= 1000;
+        }
+        if (ms < 0) {
+            ms = 0;
+        }
+        else if (ms > 200) {
+            ms = 200;
+        }
+        const sysExValue = Math.round(ms);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
+    }
+    else if (gateParamKey === "RELEASE") {
+        let ms = displayedValue ? parseFloat(displayedValue) : 0;
+        if (!displayedValue.includes("ms") && displayedValue.includes("s")) {
+            ms *= 1000;
+        }
+        if (ms < 20) {
+            ms = 20;
+        }
+        else if (ms > 5000) {
+            ms = 5000;
+        }
+        const sysExValue = Math.round(255 * (Math.log(ms / 20) / Math.log(250)));
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
+    }
+    else if (gateParamKey === "DEPTH") {
+        let dbDepth = displayedValue ? parseFloat(displayedValue) : 0;
+        const isInf = displayedValue.includes("Inf");
+        if (dbDepth < 0) {
+            dbDepth = 0;
+        }
+        else if (dbDepth > 61 || isInf) {
+            dbDepth = 61;
+        }
+        const sysExVolume = Math.round(dbDepth);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExVolume);
+    }
+    else if (gateParamKey === "THRESHOLD_LEVEL") {
+        println(`${displayedValue} ${value}`);
+        let dbThreshold = displayedValue ? parseFloat(displayedValue) : 0;
+        let isInf = displayedValue.includes("Inf");
+        if (dbThreshold < -90 || isInf) {
+            dbThreshold = -90;
+        }
+        else if (dbThreshold > 0) {
+            dbThreshold = 0;
+        }
+        const sysExVolume = Math.round(dbThreshold + 90);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExVolume);
     }
 }
 /* From DDX3216 */
@@ -448,7 +552,7 @@ function selectBitwigFaderAndCloseOpenGroup(faderIndex, groupIsOpen) {
         track.isGroupExpanded().set(groupIsOpen);
     }
 }
-/// EQ-2
+//// to EQ-2
 function setBitwigHighPassIsEnabled(faderIndex, isEnabled) {
     const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds["EQ-2"]);
     if (device) {
@@ -479,8 +583,8 @@ function setBitwigHighPassFreq(faderIndex, fnCode, sysexValue) {
         lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
     }
 }
-/// EQ-5
-function setBitwigEQisEnabled(faderIndex, isEnabled) {
+//// to EQ-5
+function setBitwigEQIsEnabled(faderIndex, isEnabled) {
     const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds["EQ-5"]);
     if (device) {
         device.isEnabled().set(isEnabled);
@@ -562,6 +666,39 @@ function setBitwigEQType(faderIndex, fnCode, sysexValue) {
             const param = params[`Q${bandIndex + 1}`];
             param.setImmediately(qToNormalized(0.71));
         }
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+//// to Gate
+function setBitwigGateIsEnabled(faderIndex, isEnabled) {
+    const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Gate);
+    if (device) {
+        device.isEnabled().set(isEnabled);
+        lastDeviceReceiveAction[`${faderIndex}32`] = Date.now();
+    }
+}
+function gateDbToNorm(dB) {
+    return 0.996 * Math.pow(10, 0.01664 * dB);
+}
+function setBitwigGateThreshold(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Gate);
+    if (device) {
+        let volDb = -90 + sysexValue;
+        const param = params[`THRESHOLD_LEVEL`];
+        param.setImmediately(gateDbToNorm(volDb));
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+function setBitwigGateRange(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Gate);
+    if (device) {
+        let range = sysexValue;
+        if (range >= 61) {
+            range = 120;
+        }
+        const normed = Math.min(Math.max(range / 120, 0), 1);
+        const param = params[`DEPTH`];
+        param.setImmediately(normed);
         lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
     }
 }
@@ -662,7 +799,7 @@ function processIncomingSysex(sysexData) {
                 // EQ on/off, etc..
             }
             else if (functionCode === "14") {
-                setBitwigEQisEnabled(faderIndexInt, !!sysexValue);
+                setBitwigEQIsEnabled(faderIndexInt, !!sysexValue);
             }
             else if (ddxEq5FnCodeMap.freq.includes(functionCode.toUpperCase())) {
                 setBitwigEQFreq(faderIndexInt, functionCode.toUpperCase(), sysexValue);
@@ -675,13 +812,23 @@ function processIncomingSysex(sysexData) {
             }
             else if (ddxEq5FnCodeMap.type.includes(functionCode.toUpperCase())) {
                 setBitwigEQType(faderIndexInt, functionCode.toUpperCase(), sysexValue);
-                // High Pass on/off
+                // High Pass on/off, etc..
             }
             else if (functionCode === "25") {
                 setBitwigHighPassIsEnabled(faderIndexInt, !!sysexValue);
             }
             else if (ddxEq2FnCodeMap.freq.includes(functionCode.toUpperCase())) {
                 setBitwigHighPassFreq(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+                // Gate on/off, etc..
+            }
+            else if (functionCode === "32") {
+                setBitwigGateIsEnabled(faderIndexInt, !!sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxGateCodeMap, functionCode.toUpperCase()) === "THRESHOLD_LEVEL") {
+                setBitwigGateThreshold(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxGateCodeMap, functionCode.toUpperCase()) === "DEPTH") {
+                setBitwigGateRange(faderIndexInt, functionCode.toUpperCase(), sysexValue);
             }
         });
     }
@@ -692,12 +839,16 @@ function setupDeviceBank(faderIndex, track) {
         const device = deviceBank.getItemAt(j);
         const params = {
             [BitwigDeviceIds["EQ-2"]]: Object.assign({}, eq2ParamsTemplate),
+            [BitwigDeviceIds.Gate]: Object.assign({}, gateParamsTemplate),
             [BitwigDeviceIds["EQ-5"]]: Object.assign({}, eq5ParamsTemplate),
         };
         const bitwigDevices = {
             [BitwigDeviceIds["EQ-2"]]: device.createSpecificBitwigDevice(
             // @ts-expect-error
             java.util.UUID.fromString(BitwigDeviceIds["EQ-2"])),
+            [BitwigDeviceIds.Gate]: device.createSpecificBitwigDevice(
+            // @ts-expect-error
+            java.util.UUID.fromString(BitwigDeviceIds.Gate)),
             [BitwigDeviceIds["EQ-5"]]: device.createSpecificBitwigDevice(
             // @ts-expect-error
             java.util.UUID.fromString(BitwigDeviceIds["EQ-5"])),
@@ -708,16 +859,25 @@ function setupDeviceBank(faderIndex, track) {
             if (isDevice(name, BitwigDeviceIds["EQ-5"])) {
                 setDevice(faderIndex, j, BitwigDeviceIds["EQ-5"], device, params[BitwigDeviceIds["EQ-5"]]);
                 host.scheduleTask(() => {
-                    sendSysExEQToMixer(faderIndex, "14", device.isEnabled().getAsBoolean() ? 1 : 0);
+                    sendSysExDeviceToMixer(faderIndex, "14", device.isEnabled().getAsBoolean() ? 1 : 0);
                     Object.entries(params[BitwigDeviceIds["EQ-5"]]).forEach(([eqParamKey, eqParam]) => {
-                        sendEQParamToDDX(faderIndex, eqParamKey, eqParam.displayedValue().get(), eqParam.value().get());
+                        sendEQ5ParamToDDX(faderIndex, eqParamKey, eqParam.displayedValue().get(), eqParam.value().get());
+                    });
+                }, 0);
+            }
+            else if (isDevice(name, BitwigDeviceIds.Gate)) {
+                setDevice(faderIndex, j, BitwigDeviceIds.Gate, device, params[BitwigDeviceIds.Gate]);
+                host.scheduleTask(() => {
+                    sendSysExDeviceToMixer(faderIndex, "32", device.isEnabled().getAsBoolean() ? 1 : 0);
+                    Object.entries(params[BitwigDeviceIds.Gate]).forEach(([paramKey, param]) => {
+                        sendGateParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
                     });
                 }, 0);
             }
             else if (isDevice(name, BitwigDeviceIds["EQ-2"])) {
                 setDevice(faderIndex, j, BitwigDeviceIds["EQ-2"], device, params[BitwigDeviceIds["EQ-2"]]);
                 host.scheduleTask(() => {
-                    sendSysExEQToMixer(faderIndex, "25", device.isEnabled().getAsBoolean() ? 1 : 0);
+                    sendSysExDeviceToMixer(faderIndex, "25", device.isEnabled().getAsBoolean() ? 1 : 0);
                     Object.entries(params[BitwigDeviceIds["EQ-2"]]).forEach(([eqParamKey, eqParam]) => {
                         sendHighPassParamToDDX(faderIndex, eqParamKey, eqParam.displayedValue().get(), eqParam.value().get());
                     });
@@ -740,7 +900,10 @@ function setupDeviceBank(faderIndex, track) {
                         //     .displayedValue()
                         //     .get()} ${param.value().get()}`
                         // );
-                        sendEQParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
+                        sendEQ5ParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
+                    }
+                    else if (isDevice(device.name().get(), BitwigDeviceIds.Gate)) {
+                        sendGateParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
                     }
                     else if (isDevice(device.name().get(), BitwigDeviceIds["EQ-2"])) {
                         sendHighPassParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
@@ -752,10 +915,13 @@ function setupDeviceBank(faderIndex, track) {
         device.isEnabled().markInterested();
         device.isEnabled().addValueObserver((isEnabled) => {
             if (isDevice(device.name().get(), BitwigDeviceIds["EQ-5"])) {
-                sendSysExEQToMixer(faderIndex, "14", isEnabled ? 1 : 0);
+                sendSysExDeviceToMixer(faderIndex, "14", isEnabled ? 1 : 0);
+            }
+            else if (isDevice(device.name().get(), BitwigDeviceIds.Gate)) {
+                sendSysExDeviceToMixer(faderIndex, "32", isEnabled ? 1 : 0);
             }
             else if (isDevice(device.name().get(), BitwigDeviceIds["EQ-2"])) {
-                sendSysExEQToMixer(faderIndex, "25", isEnabled ? 1 : 0);
+                sendSysExDeviceToMixer(faderIndex, "25", isEnabled ? 1 : 0);
             }
         });
         // device.addDirectParameterIdObserver((ids) => {
