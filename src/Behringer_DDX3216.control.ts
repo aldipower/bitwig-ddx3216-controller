@@ -555,7 +555,7 @@ function sendGateParamToDDX(faderIndex: number, gateParamKey: string, displayedV
   // RELEASE 1.00 ms 0
   // RELEASE 5.82 ms 0.2550000000000005
   // RELEASE 31.6 ms 0.49999999999999933
-  // RELEASE 1.00 s 1
+  // RELEASE 1000 ms 1
   // DDX 20ms - 5s
 
   // DEPTH 0 dB 0
@@ -953,6 +953,46 @@ function setBitwigGateRange(faderIndex: number, fnCode: string, sysexValue: numb
   }
 }
 
+function setBitwigGateAttack(faderIndex: number, fnCode: string, sysexValue: number) {
+  const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Gate);
+  if (device) {
+    let ms = sysexValue;
+
+    if (ms >= 100) {
+      ms = 100;
+    } else if (ms < 0.1) {
+      ms = 0.1;
+    }
+
+    const normed = Math.min(Math.max((Math.log(ms)-Math.log(0.1)) / (Math.log(100)-Math.log(0.1)), 0), 1);
+
+    const param = params[`ATTACK`];
+    param.setImmediately(normed);
+
+    lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+  }
+}
+
+function setBitwigGateRelease(faderIndex: number, fnCode: string, sysexValue: number) {
+  const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Gate);
+  if (device) {
+    let ms = 20 * Math.pow(250, sysexValue / 255);
+
+    if (ms >= 1000) {
+      ms = 1000;
+    } else if (ms < 1) {
+      ms = 1;
+    }
+
+    const normed = Math.min(Math.max(Math.log(ms) / Math.log(1000), 0), 1);
+
+    const param = params[`RELEASE`];
+    param.setImmediately(normed);
+
+    lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+  }
+}
+
 /* General control functions */
 
 // DDX: AUX1, AUX2, AUX3, AUX4, FX1, FX2, FX3, FX4
@@ -1114,6 +1154,10 @@ function processIncomingSysex(sysexData: string) {
         setBitwigGateThreshold(faderIndexInt, functionCode.toUpperCase(), sysexValue);
       } else if (getParamKeyByFnCode(ddxGateCodeMap, functionCode.toUpperCase()) === "DEPTH") {
         setBitwigGateRange(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+      } else if (getParamKeyByFnCode(ddxGateCodeMap, functionCode.toUpperCase()) === "ATTACK") {
+        setBitwigGateAttack(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+      } else if (getParamKeyByFnCode(ddxGateCodeMap, functionCode.toUpperCase()) === "RELEASE") {
+        setBitwigGateRelease(faderIndexInt, functionCode.toUpperCase(), sysexValue);
       }
     });
   }
