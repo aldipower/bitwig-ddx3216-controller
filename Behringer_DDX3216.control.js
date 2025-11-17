@@ -126,6 +126,20 @@ const gateParamsTemplate = {
     DEPTH: null,
     THRESHOLD_LEVEL: null,
 };
+const ddxCompressorCodeMap = {
+    ATTACK: "2A",
+    RELEASE: "2B",
+    RATIO: "2C",
+    THRESHOLD: "2E",
+    OUTPUT: "2F",
+};
+const compressorParamsTemplate = {
+    ATTACK: null,
+    RELEASE: null,
+    RATIO: null,
+    THRESHOLD: null,
+    OUTPUT: null,
+};
 function getParamKeyByFnCode(map, fnCode) {
     for (const [key, value] of Object.entries(map)) {
         if (value === fnCode) {
@@ -390,6 +404,7 @@ function sendEQ5ParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
         sendSysExDeviceToMixer(faderIndex, ddxEq5FnCodeMap.gain[bandIndex], sysExVolume);
     }
 }
+/// from Gate
 function sendGateParamToDDX(faderIndex, gateParamKey, displayedValue, value) {
     const fnCode = ddxGateCodeMap[gateParamKey];
     if (fnCode == null) {
@@ -473,6 +488,114 @@ function sendGateParamToDDX(faderIndex, gateParamKey, displayedValue, value) {
         }
         const sysExVolume = Math.round(dbThreshold + 90);
         sendSysExDeviceToMixer(faderIndex, fnCode, sysExVolume);
+    }
+}
+/// from Compressor
+const DDXtoBitwigRatioMap = {
+    ["1.0"]: 0,
+    ["1.2"]: 0.164,
+    ["1.4"]: 0.284,
+    ["1.6"]: 0.374,
+    ["1.8"]: 0.445,
+    ["2.0"]: 0.5,
+    ["2.5"]: 0.6,
+    ["3.0"]: 0.667,
+    ["3.5"]: 0.714,
+    ["4.0"]: 0.75,
+    ["5.0"]: 0.8,
+    ["6.0"]: 0.8333,
+    ["8.0"]: 0.875,
+    ["10.0"]: 0.9,
+    ["20.0"]: 0.95,
+    ["100.0"]: 1,
+};
+function nearestKeyIndex(value, arr) {
+    let low = 0;
+    let high = arr.length - 1;
+    while (low <= high) {
+        const mid = (low + high) >> 1;
+        const value = arr[mid];
+        if (value === value)
+            return mid;
+        if (value < value)
+            low = mid + 1;
+        else
+            high = mid - 1;
+    }
+    if (low === 0)
+        return 0;
+    if (low === arr.length)
+        return arr.length - 1;
+    return Math.abs(arr[low] - value) < Math.abs(arr[low - 1] - value)
+        ? low
+        : low - 1;
+}
+function sendCompressorParamToDDX(faderIndex, compressorParamKey, displayedValue, value) {
+    const fnCode = ddxCompressorCodeMap[compressorParamKey];
+    if (fnCode == null) {
+        return;
+    }
+    if (compressorParamKey === "ATTACK") {
+        let ms = displayedValue ? parseFloat(displayedValue) : 0;
+        if (!displayedValue.includes("ms") && displayedValue.includes("s")) {
+            ms *= 1000;
+        }
+        if (ms < 0) {
+            ms = 0;
+        }
+        else if (ms > 200) {
+            ms = 200;
+        }
+        const sysExValue = Math.round(ms);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
+    }
+    else if (compressorParamKey === "RELEASE") {
+        let ms = displayedValue ? parseFloat(displayedValue) : 0;
+        if (!displayedValue.includes("ms") && displayedValue.includes("s")) {
+            ms *= 1000;
+        }
+        if (ms < 20) {
+            ms = 20;
+        }
+        else if (ms > 5000) {
+            ms = 5000;
+        }
+        const sysExValue = Math.round(255 * (Math.log(ms / 20) / Math.log(250)));
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
+    }
+    else if (compressorParamKey === "THRESHOLD") {
+        let dbThreshold = displayedValue ? parseFloat(displayedValue) : 0;
+        let isInf = displayedValue.includes("Inf");
+        if (dbThreshold < -60 || isInf) {
+            dbThreshold = -60;
+        }
+        else if (dbThreshold > 0) {
+            dbThreshold = 0;
+        }
+        const sysExVolume = Math.round(dbThreshold + 60);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExVolume);
+    }
+    else if (compressorParamKey === "OUTPUT") {
+        let outputGainDb = displayedValue ? parseFloat(displayedValue) : 0;
+        if (outputGainDb < 0) {
+            outputGainDb = 0;
+        }
+        else if (outputGainDb > 24) {
+            outputGainDb = 24;
+        }
+        const sysExVolume = Math.round(outputGainDb);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExVolume);
+    }
+    else if (compressorParamKey === "RATIO") {
+        let ratio = displayedValue ? parseFloat(displayedValue.split(":")[0]) || 1 : 1;
+        if (ratio < 1) {
+            ratio = 1;
+        }
+        else if (ratio > 100 || !Number.isFinite(ratio)) {
+            ratio = 100;
+        }
+        const sysExRatio = nearestKeyIndex(ratio, Object.keys(DDXtoBitwigRatioMap));
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExRatio);
     }
 }
 /* From DDX3216 */
@@ -734,6 +857,99 @@ function setBitwigGateRelease(faderIndex, fnCode, sysexValue) {
         lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
     }
 }
+//// to Compressor
+function setBitwigCompressorIsEnabled(faderIndex, isEnabled) {
+    const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Compressor);
+    if (device) {
+        device.isEnabled().set(isEnabled);
+        lastDeviceReceiveAction[`${faderIndex}28`] = Date.now();
+    }
+}
+function ratioToNorm(ratio) {
+    return Math.min(Math.max(0.27627208 * Math.pow(Math.log10(ratio), 3) -
+        1.31518417 * Math.pow(Math.log10(ratio), 2) +
+        1.98567827 * Math.log10(ratio), 0), 1);
+}
+function setBitwigCompressorRatio(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Compressor);
+    if (device) {
+        let index = sysexValue;
+        if (index > 15) {
+            index = 15;
+        }
+        else if (index < 0) {
+            index = 0;
+        }
+        println(`INCOMING RATIO ${sysexValue} ${index} ${Object.values(DDXtoBitwigRatioMap)[index]}`);
+        const param = params[`RATIO`];
+        param.setImmediately(Object.values(DDXtoBitwigRatioMap)[index]);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+function setBitwigCompressorOutput(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Compressor);
+    if (device) {
+        let dB = sysexValue;
+        if (dB > 20) {
+            dB = 20;
+        }
+        else if (dB < 0) {
+            dB = 0;
+        }
+        const normed = (dB + 20) / 40;
+        const param = params[`OUTPUT`];
+        param.setImmediately(normed);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+function setBitwigCompressorThreshold(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Compressor);
+    if (device) {
+        let dB = -60 + sysexValue;
+        if (dB > 0) {
+            dB = 0;
+        }
+        else if (dB < -60) {
+            dB = -60;
+        }
+        const normed = Math.min(Math.max((dB + 60) / 60, 0), 1);
+        const param = params[`THRESHOLD`];
+        param.setImmediately(normed);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+function setBitwigCompressorAttack(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Compressor);
+    if (device) {
+        let ms = sysexValue;
+        if (ms >= 70.8) {
+            ms = 70.8;
+        }
+        else if (ms < 0.20) {
+            ms = 0.20;
+        }
+        const normed = (Math.log(ms) - Math.log(0.20)) / (Math.log(70.8) - Math.log(0.20));
+        const param = params[`ATTACK`];
+        param.setImmediately(normed);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+function setBitwigCompressorRelease(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Compressor);
+    if (device) {
+        let ms = 20 * Math.pow(250, sysexValue / 255);
+        if (ms >= 1410) {
+            ms = 1410;
+        }
+        else if (ms < 38.9) {
+            ms = 38.9;
+        }
+        const normed = Math.min(Math.max((Math.log(ms) - Math.log(38.9)) / (Math.log(1410) - Math.log(38.9)), 0), 1);
+        const param = params[`RELEASE`];
+        param.setImmediately(normed);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
 /* General control functions */
 // DDX: AUX1, AUX2, AUX3, AUX4, FX1, FX2, FX3, FX4
 const sendsFunctionCodes = ["46", "48", "4A", "4C", "50", "52", "54", "56"];
@@ -867,6 +1083,25 @@ function processIncomingSysex(sysexData) {
             }
             else if (getParamKeyByFnCode(ddxGateCodeMap, functionCode.toUpperCase()) === "RELEASE") {
                 setBitwigGateRelease(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+                // Compressor on/off, etc..
+            }
+            else if (functionCode === "28") {
+                setBitwigCompressorIsEnabled(faderIndexInt, !!sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxCompressorCodeMap, functionCode.toUpperCase()) === "THRESHOLD") {
+                setBitwigCompressorThreshold(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxCompressorCodeMap, functionCode.toUpperCase()) === "OUTPUT") {
+                setBitwigCompressorOutput(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxCompressorCodeMap, functionCode.toUpperCase()) === "ATTACK") {
+                setBitwigCompressorAttack(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxCompressorCodeMap, functionCode.toUpperCase()) === "RELEASE") {
+                setBitwigCompressorRelease(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxCompressorCodeMap, functionCode.toUpperCase()) === "RATIO") {
+                setBitwigCompressorRatio(faderIndexInt, functionCode.toUpperCase(), sysexValue);
             }
         });
     }
@@ -878,6 +1113,7 @@ function setupDeviceBank(faderIndex, track) {
         const params = {
             [BitwigDeviceIds["EQ-2"]]: Object.assign({}, eq2ParamsTemplate),
             [BitwigDeviceIds.Gate]: Object.assign({}, gateParamsTemplate),
+            [BitwigDeviceIds.Compressor]: Object.assign({}, compressorParamsTemplate),
             [BitwigDeviceIds["EQ-5"]]: Object.assign({}, eq5ParamsTemplate),
         };
         const bitwigDevices = {
@@ -887,6 +1123,9 @@ function setupDeviceBank(faderIndex, track) {
             [BitwigDeviceIds.Gate]: device.createSpecificBitwigDevice(
             // @ts-expect-error
             java.util.UUID.fromString(BitwigDeviceIds.Gate)),
+            [BitwigDeviceIds.Compressor]: device.createSpecificBitwigDevice(
+            // @ts-expect-error
+            java.util.UUID.fromString(BitwigDeviceIds.Compressor)),
             [BitwigDeviceIds["EQ-5"]]: device.createSpecificBitwigDevice(
             // @ts-expect-error
             java.util.UUID.fromString(BitwigDeviceIds["EQ-5"])),
@@ -909,6 +1148,15 @@ function setupDeviceBank(faderIndex, track) {
                     sendSysExDeviceToMixer(faderIndex, "32", device.isEnabled().getAsBoolean() ? 1 : 0);
                     Object.entries(params[BitwigDeviceIds.Gate]).forEach(([paramKey, param]) => {
                         sendGateParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
+                    });
+                }, 0);
+            }
+            else if (isDevice(name, BitwigDeviceIds.Compressor)) {
+                setDevice(faderIndex, j, BitwigDeviceIds.Compressor, device, params[BitwigDeviceIds.Compressor]);
+                host.scheduleTask(() => {
+                    sendSysExDeviceToMixer(faderIndex, "28", device.isEnabled().getAsBoolean() ? 1 : 0);
+                    Object.entries(params[BitwigDeviceIds.Compressor]).forEach(([paramKey, param]) => {
+                        sendCompressorParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
                     });
                 }, 0);
             }
@@ -943,6 +1191,9 @@ function setupDeviceBank(faderIndex, track) {
                     else if (isDevice(device.name().get(), BitwigDeviceIds.Gate)) {
                         sendGateParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
                     }
+                    else if (isDevice(device.name().get(), BitwigDeviceIds.Compressor)) {
+                        sendCompressorParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
+                    }
                     else if (isDevice(device.name().get(), BitwigDeviceIds["EQ-2"])) {
                         sendHighPassParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
                     }
@@ -958,13 +1209,16 @@ function setupDeviceBank(faderIndex, track) {
             else if (isDevice(device.name().get(), BitwigDeviceIds.Gate)) {
                 sendSysExDeviceToMixer(faderIndex, "32", isEnabled ? 1 : 0);
             }
+            else if (isDevice(device.name().get(), BitwigDeviceIds.Compressor)) {
+                sendSysExDeviceToMixer(faderIndex, "28", isEnabled ? 1 : 0);
+            }
             else if (isDevice(device.name().get(), BitwigDeviceIds["EQ-2"])) {
                 sendSysExDeviceToMixer(faderIndex, "25", isEnabled ? 1 : 0);
             }
         });
-        // device.addDirectParameterIdObserver((ids) => {
-        //   println(`faderIndex ${faderIndex} deviceIndex ${j} ids ${JSON.stringify(ids)}`);
-        // });
+        device.addDirectParameterIdObserver((ids) => {
+            println(`faderIndex ${faderIndex} deviceIndex ${j} ids ${JSON.stringify(ids)}`);
+        });
         // device.addDirectParameterValueDisplayObserver(128, (id: string, value: string) => {
         //   println(`AA faderIndex ${faderIndex} deviceIndex ${j} id ${id} value ${value}`);
         // }).setObservedParameterIds(["CONTENTS/GAIN1"]);
