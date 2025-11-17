@@ -148,6 +148,9 @@ function getParamKeyByFnCode(map, fnCode) {
     }
     return null;
 }
+const ddxDelayCodeMap = {};
+// ["CONTENTS/MIX","CONTENTS/FEEDBACK","CONTENTS/TIME","CONTENTS/BEATTIME","CONTENTS/HICUT","CONTENTS/LOCUT","CONTENTS/OFFSET","CONTENTS/SYNC"]
+const delayParamsTemplate = {};
 /* Helper */
 function getMidiChannel() {
     const midiChannel = midiChannelSetting.getRaw() - 1;
@@ -410,32 +413,6 @@ function sendGateParamToDDX(faderIndex, gateParamKey, displayedValue, value) {
     if (fnCode == null) {
         return;
     }
-    // ATTACK 0.10 ms 0
-    // ATTACK 0.91 ms 0.31999999999999984
-    // ATTACK 3.16 ms 0.5
-    // ATTACK 100 ms 1
-    // DDX 0ms - 200ms
-    // RELEASE 1.00 ms 0
-    // RELEASE 5.82 ms 0.2550000000000005
-    // RELEASE 31.6 ms 0.49999999999999933
-    // RELEASE 1000 ms 1
-    // DDX 20ms - 5s
-    // DEPTH 0 dB 0
-    // DEPTH +60 dB 0.5
-    // DEPTH +120 dB 1
-    // DDX 0db - -60db - Inf
-    // -Inf , -144db, 0db
-    // THRESHOLD_LEVEL -10.0 dB 0.6800000000000005
-    // THRESHOLD_LEVEL -40.1 dB 0.21500000000000008
-    // DDX -90dB - 0dB
-    // -Inf dB 0
-    // -144 dB 0.004
-    // -120 dB 0.01000000000000001
-    // -60.0 dB 0.1000000000000001
-    // -20.0 dB 0.464400000000001
-    // -10.0 dB 0.6820000000000026
-    // -6.0 dB 0.7940000000000018
-    // 0 dB 1
     if (gateParamKey === "ATTACK") {
         let ms = displayedValue ? parseFloat(displayedValue) : 0;
         if (!displayedValue.includes("ms") && displayedValue.includes("s")) {
@@ -598,6 +575,25 @@ function sendCompressorParamToDDX(faderIndex, compressorParamKey, displayedValue
         sendSysExDeviceToMixer(faderIndex, fnCode, sysExRatio);
     }
 }
+/// From Delay
+function sendDelayParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
+    // const bandIndex = eqParamKey === "LO_FREQ" ? 0 : -1;
+    // if (isNaN(bandIndex) || bandIndex < 0 || bandIndex > 1) {
+    //   return;
+    // }
+    // let freq = displayedValue ? parseFloat(displayedValue) : 0;
+    // freq *= displayedValue.includes("kHz") ? 1000 : 1;
+    // if (!freq || isNaN(freq)) {
+    //   return;
+    // }
+    // if (freq > 400) {
+    //   freq = 400;
+    // } else if (freq < 4) {
+    //   freq = 4;
+    // }
+    // const sysExFreq = Math.round(80 * Math.log(freq / 4) / Math.log(100));
+    // sendSysExDeviceToMixer(faderIndex, ddxEq2FnCodeMap.freq[bandIndex], sysExFreq);
+}
 /* From DDX3216 */
 function dbToNormalized(db) {
     if (db <= -80.0) {
@@ -680,6 +676,7 @@ function setBitwigHighPassIsEnabled(faderIndex, isEnabled) {
     const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds["EQ-2"]);
     if (device) {
         device.isEnabled().set(isEnabled);
+        device.isExpanded().set(isEnabled);
         lastDeviceReceiveAction[`${faderIndex}25`] = Date.now();
     }
 }
@@ -711,6 +708,7 @@ function setBitwigEQIsEnabled(faderIndex, isEnabled) {
     const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds["EQ-5"]);
     if (device) {
         device.isEnabled().set(isEnabled);
+        device.isExpanded().set(isEnabled);
         lastDeviceReceiveAction[`${faderIndex}14`] = Date.now();
     }
 }
@@ -797,6 +795,7 @@ function setBitwigGateIsEnabled(faderIndex, isEnabled) {
     const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Gate);
     if (device) {
         device.isEnabled().set(isEnabled);
+        device.isExpanded().set(isEnabled);
         lastDeviceReceiveAction[`${faderIndex}32`] = Date.now();
     }
 }
@@ -862,6 +861,7 @@ function setBitwigCompressorIsEnabled(faderIndex, isEnabled) {
     const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds.Compressor);
     if (device) {
         device.isEnabled().set(isEnabled);
+        device.isExpanded().set(isEnabled);
         lastDeviceReceiveAction[`${faderIndex}28`] = Date.now();
     }
 }
@@ -948,6 +948,15 @@ function setBitwigCompressorRelease(faderIndex, fnCode, sysexValue) {
         const param = params[`RELEASE`];
         param.setImmediately(normed);
         lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+//// to Delay-1
+function setBitwigDelayIsEnabled(faderIndex, isEnabled) {
+    const { device } = getFirstDeviceById(faderIndex, BitwigDeviceIds["Delay-1"]);
+    if (device) {
+        device.isEnabled().set(isEnabled);
+        device.isExpanded().set(isEnabled);
+        lastDeviceReceiveAction[`${faderIndex}3C`] = Date.now();
     }
 }
 /* General control functions */
@@ -1102,6 +1111,10 @@ function processIncomingSysex(sysexData) {
             }
             else if (getParamKeyByFnCode(ddxCompressorCodeMap, functionCode.toUpperCase()) === "RATIO") {
                 setBitwigCompressorRatio(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+                // Delay on/off, etc..
+            }
+            else if (functionCode.toUpperCase() === "3C") {
+                setBitwigDelayIsEnabled(faderIndexInt, !!sysexValue);
             }
         });
     }
@@ -1115,6 +1128,7 @@ function setupDeviceBank(faderIndex, track) {
             [BitwigDeviceIds.Gate]: Object.assign({}, gateParamsTemplate),
             [BitwigDeviceIds.Compressor]: Object.assign({}, compressorParamsTemplate),
             [BitwigDeviceIds["EQ-5"]]: Object.assign({}, eq5ParamsTemplate),
+            [BitwigDeviceIds["Delay-1"]]: Object.assign({}, delayParamsTemplate),
         };
         const bitwigDevices = {
             [BitwigDeviceIds["EQ-2"]]: device.createSpecificBitwigDevice(
@@ -1129,6 +1143,9 @@ function setupDeviceBank(faderIndex, track) {
             [BitwigDeviceIds["EQ-5"]]: device.createSpecificBitwigDevice(
             // @ts-expect-error
             java.util.UUID.fromString(BitwigDeviceIds["EQ-5"])),
+            [BitwigDeviceIds["Delay-1"]]: device.createSpecificBitwigDevice(
+            // @ts-expect-error
+            java.util.UUID.fromString(BitwigDeviceIds["Delay-1"])),
         };
         device.name().markInterested();
         device.name().addValueObserver((name) => {
@@ -1169,6 +1186,15 @@ function setupDeviceBank(faderIndex, track) {
                     });
                 }, 0);
             }
+            else if (isDevice(name, BitwigDeviceIds["Delay-1"])) {
+                setDevice(faderIndex, j, BitwigDeviceIds["Delay-1"], device, params[BitwigDeviceIds["Delay-1"]]);
+                host.scheduleTask(() => {
+                    sendSysExDeviceToMixer(faderIndex, "3C", device.isEnabled().getAsBoolean() ? 1 : 0);
+                    Object.entries(params[BitwigDeviceIds["Delay-1"]]).forEach(([paramKey, param]) => {
+                        sendDelayParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
+                    });
+                }, 0);
+            }
             else {
                 setDevice(faderIndex, j, undefined);
             }
@@ -1197,11 +1223,15 @@ function setupDeviceBank(faderIndex, track) {
                     else if (isDevice(device.name().get(), BitwigDeviceIds["EQ-2"])) {
                         sendHighPassParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
                     }
+                    else if (isDevice(device.name().get(), BitwigDeviceIds["Delay-1"])) {
+                        sendDelayParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
+                    }
                 });
                 specificParams[paramKey] = param;
             });
         });
         device.isEnabled().markInterested();
+        device.isExpanded().markInterested();
         device.isEnabled().addValueObserver((isEnabled) => {
             if (isDevice(device.name().get(), BitwigDeviceIds["EQ-5"])) {
                 sendSysExDeviceToMixer(faderIndex, "14", isEnabled ? 1 : 0);
@@ -1214,6 +1244,9 @@ function setupDeviceBank(faderIndex, track) {
             }
             else if (isDevice(device.name().get(), BitwigDeviceIds["EQ-2"])) {
                 sendSysExDeviceToMixer(faderIndex, "25", isEnabled ? 1 : 0);
+            }
+            else if (isDevice(device.name().get(), BitwigDeviceIds["Delay-1"])) {
+                sendSysExDeviceToMixer(faderIndex, "3C", isEnabled ? 1 : 0);
             }
         });
         device.addDirectParameterIdObserver((ids) => {
