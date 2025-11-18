@@ -187,6 +187,11 @@ function getTrack(faderIndex) {
             : trackBank.getItemAt(faderIndex);
 }
 /* To DDX3216 */
+function convertTo7BitHex(value) {
+    const high7bit = ((value >> 7) & 0x7f).toString(16).padStart(2, "0");
+    const low7bit = (value & 0x7f).toString(16).padStart(2, "0");
+    return `${high7bit}${low7bit}`;
+}
 // Takes and sends the sysex volume value from 0 to 1472
 // ddx_dB = -80 + value/16
 function sendSysExVolumeToMixer(faderIndex, sysExVolume) {
@@ -195,12 +200,10 @@ function sendSysExVolumeToMixer(faderIndex, sysExVolume) {
         Date.now() - FEEDBACK_INTERVAL_MS <= lastActionTimestamp) {
         return;
     }
-    const high7bit = ((sysExVolume >> 7) & 0x7f).toString(16).padStart(2, "0");
-    const low7bit = (sysExVolume & 0x7f).toString(16).padStart(2, "0");
     // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX VOLUME_FUNCTION_CODE VALUE
     const command = `2001${faderIndex
         .toString(16)
-        .padStart(2, "0")}01${high7bit}${low7bit}`.toUpperCase();
+        .padStart(2, "0")}01${convertTo7BitHex(sysExVolume)}`.toUpperCase();
     const sysex = constructSysEx(command);
     midiOut.sendSysex(sysex);
 }
@@ -244,12 +247,10 @@ function sendSysExSendToMixer(faderIndex, sendIndex, sysExVolume) {
     if (sendFunctionCode == null) {
         return;
     }
-    const high7bit = ((sysExVolume >> 7) & 0x7f).toString(16).padStart(2, "0");
-    const low7bit = (sysExVolume & 0x7f).toString(16).padStart(2, "0");
     // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX SEND_FUNCTION_CODE VALUE
     const command = `2001${faderIndex
         .toString(16)
-        .padStart(2, "0")}${sendFunctionCode}${high7bit}${low7bit}`.toUpperCase();
+        .padStart(2, "0")}${sendFunctionCode}${convertTo7BitHex(sysExVolume)}`.toUpperCase();
     const sysex = constructSysEx(command);
     midiOut.sendSysex(sysex);
 }
@@ -285,12 +286,10 @@ function panChanged(faderIndex, value) {
         return;
     }
     const sysexValue = 30 + Math.round(value * 30);
-    const high7bit = ((sysexValue >> 7) & 0x7f).toString(16).padStart(2, "0");
-    const low7bit = (sysexValue & 0x7f).toString(16).padStart(2, "0");
     // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX MUTE_FUNCTION_CODE VALUE
     const command = `2001${faderIndex
         .toString(16)
-        .padStart(2, "0")}03${high7bit}${low7bit}`.toUpperCase();
+        .padStart(2, "0")}03${convertTo7BitHex(sysexValue)}`.toUpperCase();
     const sysex = constructSysEx(command);
     midiOut.sendSysex(sysex);
 }
@@ -323,12 +322,10 @@ function sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue) {
         Date.now() - FEEDBACK_INTERVAL_MS <= lastActionTimestamp) {
         return;
     }
-    const high7bit = ((sysExValue >> 7) & 0x7f).toString(16).padStart(2, "0");
-    const low7bit = (sysExValue & 0x7f).toString(16).padStart(2, "0");
     // PARAMCHANGE_FUNC_TYPE MSG_COUNT CHANNEL/FADERINDEX FUNCTION_CODE VALUE
     const command = `2001${faderIndex
         .toString(16)
-        .padStart(2, "0")}${fnCode}${high7bit}${low7bit}`.toUpperCase();
+        .padStart(2, "0")}${fnCode}${convertTo7BitHex(sysExValue)}`.toUpperCase();
     const sysex = constructSysEx(command);
     midiOut.sendSysex(sysex);
 }

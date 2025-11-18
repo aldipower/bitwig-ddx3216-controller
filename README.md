@@ -1,12 +1,15 @@
 Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script!
 
+![Bitwig EQ-5 mapped onto the Behringer DDX3216 EQ](bitwig_eq5_to_ddx3216_eq.jpg "Bitwig EQ-5 mapped onto the DDX3216")
+
 ### Highlights
 
 * Exact dB fader mapping! -10dB in Bitwig is -10dB on the DDX3216 and so on.
 * High fader resolution of 1427 steps via SysEx.
-* Bidirectional behaviour. Your motor faders will dance! Changes in Bitwig reflect on the DDX3216 vice versa.
+* Bidirectional behaviour. Your motor faders will dance!<br>Changes in Bitwig reflect on the DDX3216 vice versa.
 * Insert strip. Channel-wise control of HighPass, Gate, Compressor, EQ and Delay in both direcions!
-* Open and close Bitwig groups.
+* Aux sends and FX busses mapped.
+* Toggle Bitwig groups.
 
 ### Features
 
@@ -18,7 +21,7 @@ Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script
 * Mutes on all channels except master
 * 8 sends on each channel by pressing the AUX1-4/FX1-4 buttons reflecting the Bitwig sends.
 * Toggle pre and post mode for sends.
-* All DDX insert effects are mapped to the respective Bitwig equivalents. It works unidirectional. You can control those effects with the DXX or control the DDX with adjusting the effects in Bitwig. Isn't that fanastic?
+* All DDX insert effects are mapped to the respective Bitwig equivalents. It works unidirectional. You can control those effects with the DXX or control the DDX with adjusting the effects in Bitwig. Isn't that fantastic?
   HighPass (EQ-2), Gate (Gate), Compressor (Compressor), EQ (EQ-5), Phase/Delay (Delay-1 with custom phase setting).
 * Select a channel in Bitwig by pressing SELECT -> ROUTING -> MAIN (the select button itself does not receive/send any SysEx/CC)
 * Open/close a group in Bitwig also by pressing SELECT -> ROUTING -> MAIN. The MAIN icon indicates the group status.
@@ -30,11 +33,23 @@ Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script
 
 ### Installation
 
-1. Simply copy the `Behringer_DDX3216.control.js` file out of the project root folder into your Bitwig `~/Bitwig Studio/Controller Scripts` folder. No need to create a sub-folder.
+1. Simply copy the the sub-folders of this project's `Bitwig Studio` folder into your own Bitwig `~/Bitwig Studio/` folder. It includes the controller script and a project template with the channel inserts ready for use.
 2. Add the controller script in Bitwig by choosing "Behringer -> DDX3216" in `Settings` and `Controller`.
 3. Select the appropriate MIDI ports in the config dialog and also check/adjust the MIDI channel.
 4. On the DDX3216 check for matching MIDI channels by pressing MMC/MIDI -> SETUP -> Transmit/Receive Channel.
 5. On the DDX3216 check if `Direct Parameter SysEx` is enabled by pressing MMC/MIDI -> SETUP -> RX/TX.
+6. Create a new Bitwig project by openening the template "DDX3216" and copy the channel strip effects from one of the tracks into your own project or simple use the freshly created project as a starting point.
+
+### Effects 
+
+To map a Bitwig effect to the related DDX3216 insert effect, you need to rename the Bitwig effect to a specfic name or __just load the "DDX3216" Bitwig template__, where you find everything prepared for direct usage or copy&paste.
+
+Bitwig name -> Effect name:
+* EQ-2 -> DDX HIGH PASS
+* Gate -> DDX GATE
+* Compressor -> DDX COMPRESSOR
+* EQ-5 -> DDX EQ-5
+* Delay-1 -> DDX Delay-1 (use the one from the template as this has a polarity invertion option)
 
 ### Good to know
 
