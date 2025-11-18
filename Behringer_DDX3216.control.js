@@ -46,8 +46,7 @@ const DDXDeviceNames = {
     [BitwigDeviceIds["Delay-1"]]: "DDX DELAY",
 };
 const deviceList = {};
-function setDevice(faderIndex, deviceIndex, deviceId, device, params) {
-    // println(`setDevice at ${faderIndex} ${deviceIndex} deviceId ${deviceId}`)
+function setDevice(faderIndex, deviceIndex, deviceId, device, params, delayPolarity) {
     if (deviceList[faderIndex] == null) {
         deviceList[faderIndex] = {};
     }
@@ -59,6 +58,7 @@ function setDevice(faderIndex, deviceIndex, deviceId, device, params) {
         deviceId,
         device,
         params,
+        delayPolarity,
     };
 }
 function getFirstDeviceById(faderIndex, deviceId) {
@@ -66,6 +66,7 @@ function getFirstDeviceById(faderIndex, deviceId) {
         device: undefined,
         deviceId: undefined,
         params: undefined,
+        delayPolarity: undefined
     };
 }
 function isDevice(name, deviceId) {
@@ -463,7 +464,6 @@ function sendGateParamToDDX(faderIndex, gateParamKey, displayedValue, value) {
         sendSysExDeviceToMixer(faderIndex, fnCode, sysExVolume);
     }
     else if (gateParamKey === "THRESHOLD_LEVEL") {
-        println(`${displayedValue} ${value}`);
         let dbThreshold = displayedValue ? parseFloat(displayedValue) : 0;
         let isInf = displayedValue.includes("Inf");
         if (dbThreshold < -90 || isInf) {
@@ -611,6 +611,13 @@ function sendDelayParamToDDX(faderIndex, delayParamKey, displayedValue, value) {
     }
     else if (delayParamKey === "MIX") {
         const sysExValue = Math.round(value * 100);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
+    }
+    else if (delayParamKey === "PHASE") {
+        if (displayedValue === "right") {
+            return;
+        }
+        const sysExValue = value;
         sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
     }
 }
@@ -1024,10 +1031,12 @@ function setBitwigDelayMix(faderIndex, fnCode, sysexValue) {
     }
 }
 function setBitwigDelayPhase(faderIndex, fnCode, sysexValue) {
-    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds["Delay-1"]);
-    if (device) {
+    const { device, delayPolarity } = getFirstDeviceById(faderIndex, BitwigDeviceIds["Delay-1"]);
+    if (device && delayPolarity) {
         let polarity = sysexValue;
-        println(`POLARITY ${polarity}`);
+        delayPolarity.leftDelayPol.value().set(polarity);
+        delayPolarity.rightDelayPol.value().set(polarity);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
     }
 }
 /* General control functions */
@@ -1058,7 +1067,11 @@ function processIncomingSysex(sysexData) {
         // );
         return;
     }
-    println(`Midi Channel: ${midiChannel} fnType: ${functionType} msgCount: ${msgCount} messages: ${messages.join("|")}`);
+    // println(
+    //   `Midi Channel SysEx: ${midiChannel} fnType: ${functionType} msgCount: ${msgCount} messages: ${messages.join(
+    //     "|"
+    //   )}`
+    // );
     if (parseInt(msgCount, 16) !== messages.length) {
         host.errorln(`Message count does not match messages length`);
     }
@@ -1076,7 +1089,9 @@ function processIncomingSysex(sysexData) {
             const paramRegex = /([0-F]{2})([0-F]{2})([0-F]{2})([0-F]{2})/gim;
             const [, faderIndex, functionCode, highWord, lowWord] = paramRegex.exec(message);
             let sysexValue = Number((parseInt(highWord, 16) << 7) | parseInt(lowWord, 16));
-            println(`faderIndex: ${faderIndex} fnCode: ${functionCode} highWord: ${highWord} lowWord: ${lowWord} sysexValue: ${sysexValue}`);
+            // println(
+            //   `Message: faderIndex: ${faderIndex} fnCode: ${functionCode} highWord: ${highWord} lowWord: ${lowWord} sysexValue: ${sysexValue}`
+            // );
             if (isNaN(sysexValue)) {
                 return;
             }
@@ -1230,9 +1245,27 @@ function setupDeviceBank(faderIndex, track) {
             // @ts-expect-error
             java.util.UUID.fromString(BitwigDeviceIds["Delay-1"])),
         };
+        const remotesCursor = device.createCursorRemoteControlsPage(2);
+        const delayPolarity = {
+            left: 0,
+            right: 0,
+            leftDelayPol: remotesCursor.getParameter(0),
+            rightDelayPol: remotesCursor.getParameter(1),
+        };
+        delayPolarity.leftDelayPol.value().addValueObserver(2, (value) => {
+            delayPolarity.left = value;
+            if (isDevice(device.name().get(), BitwigDeviceIds["Delay-1"])) {
+                sendDelayParamToDDX(faderIndex, "PHASE", "left", value);
+            }
+        });
+        delayPolarity.rightDelayPol.value().addValueObserver(2, (value) => {
+            delayPolarity.right = value;
+            if (isDevice(device.name().get(), BitwigDeviceIds["Delay-1"])) {
+                sendDelayParamToDDX(faderIndex, "PHASE", "right", value);
+            }
+        });
         device.name().markInterested();
         device.name().addValueObserver((name) => {
-            // println(`${i}-${j} NAME ${name}`);
             if (isDevice(name, BitwigDeviceIds["EQ-5"])) {
                 setDevice(faderIndex, j, BitwigDeviceIds["EQ-5"], device, params[BitwigDeviceIds["EQ-5"]]);
                 host.scheduleTask(() => {
@@ -1270,7 +1303,7 @@ function setupDeviceBank(faderIndex, track) {
                 }, 0);
             }
             else if (isDevice(name, BitwigDeviceIds["Delay-1"])) {
-                setDevice(faderIndex, j, BitwigDeviceIds["Delay-1"], device, params[BitwigDeviceIds["Delay-1"]]);
+                setDevice(faderIndex, j, BitwigDeviceIds["Delay-1"], device, params[BitwigDeviceIds["Delay-1"]], delayPolarity);
                 host.scheduleTask(() => {
                     sendSysExDeviceToMixer(faderIndex, "3C", device.isEnabled().getAsBoolean() ? 1 : 0);
                     Object.entries(params[BitwigDeviceIds["Delay-1"]]).forEach(([paramKey, param]) => {
@@ -1288,13 +1321,13 @@ function setupDeviceBank(faderIndex, track) {
                 param.name().markInterested();
                 param.displayedValue().markInterested();
                 param.value().markInterested();
-                param.displayedValue().addValueObserver((value) => {
+                param.displayedValue().addValueObserver(() => {
+                    // println(
+                    //   `Device Param: ${faderIndex}-${j} ${paramKey} "${param.name().get()}" ${param
+                    //     .displayedValue()
+                    //     .get()} ${param.value().get()}`
+                    // );
                     if (isDevice(device.name().get(), BitwigDeviceIds["EQ-5"])) {
-                        // println(
-                        //   `DD ${faderIndex}-${j} ${paramKey} "${param.name().get()}" ${param
-                        //     .displayedValue()
-                        //     .get()} ${param.value().get()}`
-                        // );
                         sendEQ5ParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
                     }
                     else if (isDevice(device.name().get(), BitwigDeviceIds.Gate)) {
@@ -1455,7 +1488,9 @@ function init() {
     masterTrack = host.createMasterTrack(0);
     registerObserver();
     midiIn.setSysexCallback((sysexData) => {
-        println(`Sysex received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`);
+        // println(
+        //   `SysEx received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`
+        // );
         if (!sysexData.startsWith("f0002032")) {
             return;
         }
