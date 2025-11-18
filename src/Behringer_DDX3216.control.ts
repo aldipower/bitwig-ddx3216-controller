@@ -34,6 +34,7 @@ let masterTrack: API.MasterTrack;
 
 let midiChannelSetting: API.SettableRangedValue;
 let faderValueMappingSetting: API.SettableEnumValue;
+let debugSetting: API.SettableBooleanValue;
 
 /* Device setup */
 
@@ -1400,19 +1401,23 @@ function processIncomingSysex(sysexData: string) {
     settingsMidiChannel !== undefined &&
     parseInt(midiChannel, 16) !== settingsMidiChannel
   ) {
-    // println(
-    //   `Incoming midi channel ${
-    //     parseInt(midiChannel, 16) + 1
-    //   } does not match set channel ${settingsMidiChannel + 1}.`
-    // );
+    if (debugSetting.getAsBoolean()) {
+      println(
+        `Incoming midi channel ${
+          parseInt(midiChannel, 16) + 1
+        } does not match set channel ${settingsMidiChannel + 1}.`
+      );
+    }
     return;
   }
 
-  // println(
-  //   `Midi Channel SysEx: ${midiChannel} fnType: ${functionType} msgCount: ${msgCount} messages: ${messages.join(
-  //     "|"
-  //   )}`
-  // );
+  if (debugSetting.getAsBoolean()) {
+    println(
+      `Midi Channel SysEx: ${midiChannel} fnType: ${functionType} msgCount: ${msgCount} messages: ${messages.join(
+        "|"
+      )}`
+    );
+  }
 
   if (parseInt(msgCount, 16) !== messages.length) {
     host.errorln(`Message count does not match messages length`);
@@ -1440,9 +1445,11 @@ function processIncomingSysex(sysexData: string) {
         (parseInt(highWord, 16) << 7) | parseInt(lowWord, 16)
       );
 
-      // println(
-      //   `Message: faderIndex: ${faderIndex} fnCode: ${functionCode} highWord: ${highWord} lowWord: ${lowWord} sysexValue: ${sysexValue}`
-      // );
+      if (debugSetting.getAsBoolean()) {
+        println(
+          `Message: faderIndex: ${faderIndex} fnCode: ${functionCode} highWord: ${highWord} lowWord: ${lowWord} sysexValue: ${sysexValue}`
+        );
+      }
 
       if (isNaN(sysexValue)) {
         return;
@@ -1749,12 +1756,6 @@ function setupDeviceBank(
         param.value().markInterested();
   
         param.displayedValue().addValueObserver(() => {
-          // println(
-          //   `Device Param: ${faderIndex}-${j} ${paramKey} "${param.name().get()}" ${param
-          //     .displayedValue()
-          //     .get()} ${param.value().get()}`
-          // );
-
           if (isDevice(device.name().get(), BitwigDeviceIds["EQ-5"])) {
             sendEQ5ParamToDDX(
               faderIndex,
@@ -1838,6 +1839,11 @@ function createBitwigSettingsUI() {
       128,
       "Support me via https://aldipower.bandcamp.com/album/das-reihenhaus and purchase the album. Thank you so much."
     );
+
+  debugSetting = host
+    .getPreferences()
+    .getBooleanSetting("Debug output in console", "Debugging", false);
+
 }
 
 function registerObserver() {
@@ -1959,7 +1965,7 @@ host.defineController(
   "57fb8818-a6a6-4a23-9413-2a1a5aea3ce1",
   AUTHOR
 );
-host.setShouldFailOnDeprecatedUse(true);
+host.setShouldFailOnDeprecatedUse(false);
 host.defineMidiPorts(1, 1);
 host.addDeviceNameBasedDiscoveryPair(["DDX3216"], ["DDX3216"]);
 
@@ -1980,9 +1986,11 @@ function init() {
   registerObserver();
 
   midiIn.setSysexCallback((sysexData) => {
-    // println(
-    //   `SysEx received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`
-    // );
+    if (debugSetting.getAsBoolean()) {
+      println(
+        `SysEx received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`
+      );
+    }
 
     if (!sysexData.startsWith("f0002032")) {
       return;

@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "outDir": "./",
+    "outDir": "./Bitwig Studio/Controller Scripts",
     "target": "es2017",
     "module": "commonjs",
     "checkJs": false,

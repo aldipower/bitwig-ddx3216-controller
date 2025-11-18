@@ -28,6 +28,7 @@ let effectTrackBank;
 let masterTrack;
 let midiChannelSetting;
 let faderValueMappingSetting;
+let debugSetting;
 /* Device setup */
 var BitwigDeviceIds;
 (function (BitwigDeviceIds) {
@@ -1060,18 +1061,14 @@ function processIncomingSysex(sysexData) {
     const messages = messagesString.match(/.{1,8}/g);
     if (settingsMidiChannel !== undefined &&
         parseInt(midiChannel, 16) !== settingsMidiChannel) {
-        // println(
-        //   `Incoming midi channel ${
-        //     parseInt(midiChannel, 16) + 1
-        //   } does not match set channel ${settingsMidiChannel + 1}.`
-        // );
+        if (debugSetting.getAsBoolean()) {
+            println(`Incoming midi channel ${parseInt(midiChannel, 16) + 1} does not match set channel ${settingsMidiChannel + 1}.`);
+        }
         return;
     }
-    // println(
-    //   `Midi Channel SysEx: ${midiChannel} fnType: ${functionType} msgCount: ${msgCount} messages: ${messages.join(
-    //     "|"
-    //   )}`
-    // );
+    if (debugSetting.getAsBoolean()) {
+        println(`Midi Channel SysEx: ${midiChannel} fnType: ${functionType} msgCount: ${msgCount} messages: ${messages.join("|")}`);
+    }
     if (parseInt(msgCount, 16) !== messages.length) {
         host.errorln(`Message count does not match messages length`);
     }
@@ -1089,9 +1086,9 @@ function processIncomingSysex(sysexData) {
             const paramRegex = /([0-F]{2})([0-F]{2})([0-F]{2})([0-F]{2})/gim;
             const [, faderIndex, functionCode, highWord, lowWord] = paramRegex.exec(message);
             let sysexValue = Number((parseInt(highWord, 16) << 7) | parseInt(lowWord, 16));
-            // println(
-            //   `Message: faderIndex: ${faderIndex} fnCode: ${functionCode} highWord: ${highWord} lowWord: ${lowWord} sysexValue: ${sysexValue}`
-            // );
+            if (debugSetting.getAsBoolean()) {
+                println(`Message: faderIndex: ${faderIndex} fnCode: ${functionCode} highWord: ${highWord} lowWord: ${lowWord} sysexValue: ${sysexValue}`);
+            }
             if (isNaN(sysexValue)) {
                 return;
             }
@@ -1322,11 +1319,6 @@ function setupDeviceBank(faderIndex, track) {
                 param.displayedValue().markInterested();
                 param.value().markInterested();
                 param.displayedValue().addValueObserver(() => {
-                    // println(
-                    //   `Device Param: ${faderIndex}-${j} ${paramKey} "${param.name().get()}" ${param
-                    //     .displayedValue()
-                    //     .get()} ${param.value().get()}`
-                    // );
                     if (isDevice(device.name().get(), BitwigDeviceIds["EQ-5"])) {
                         sendEQ5ParamToDDX(faderIndex, paramKey, param.displayedValue().get(), param.value().get());
                     }
@@ -1381,6 +1373,9 @@ function createBitwigSettingsUI() {
     host
         .getPreferences()
         .getStringSetting("Developed by Felix Gertz", "Support", 128, "Support me via https://aldipower.bandcamp.com/album/das-reihenhaus and purchase the album. Thank you so much.");
+    debugSetting = host
+        .getPreferences()
+        .getBooleanSetting("Debug output in console", "Debugging", false);
 }
 function registerObserver() {
     trackBank.itemCount().markInterested();
@@ -1476,7 +1471,7 @@ function registerObserver() {
 /* Hooks and init */
 loadAPI(24);
 host.defineController(VENDOR, EXTENSION_NAME, VERSION, "57fb8818-a6a6-4a23-9413-2a1a5aea3ce1", AUTHOR);
-host.setShouldFailOnDeprecatedUse(true);
+host.setShouldFailOnDeprecatedUse(false);
 host.defineMidiPorts(1, 1);
 host.addDeviceNameBasedDiscoveryPair(["DDX3216"], ["DDX3216"]);
 function init() {
@@ -1488,9 +1483,9 @@ function init() {
     masterTrack = host.createMasterTrack(0);
     registerObserver();
     midiIn.setSysexCallback((sysexData) => {
-        // println(
-        //   `SysEx received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`
-        // );
+        if (debugSetting.getAsBoolean()) {
+            println(`SysEx received ${sysexData} midiChannelSetting: ${midiChannelSetting.getRaw()}`);
+        }
         if (!sysexData.startsWith("f0002032")) {
             return;
         }

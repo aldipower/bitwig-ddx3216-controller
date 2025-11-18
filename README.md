@@ -4,8 +4,9 @@ Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script
 
 * Exact dB fader mapping! -10dB in Bitwig is -10dB on the DDX3216 and so on.
 * High fader resolution of 1427 steps via SysEx.
-* Open and close Bitwig groups.
 * Bidirectional behaviour. Your motor faders will dance! Changes in Bitwig reflect on the DDX3216 vice versa.
+* Insert strip. Channel-wise control of HighPass, Gate, Compressor, EQ and Delay in both direcions!
+* Open and close Bitwig groups.
 
 ### Features
 
@@ -17,6 +18,8 @@ Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script
 * Mutes on all channels except master
 * 8 sends on each channel by pressing the AUX1-4/FX1-4 buttons reflecting the Bitwig sends.
 * Toggle pre and post mode for sends.
+* All DDX insert effects are mapped to the respective Bitwig equivalents. It works unidirectional. You can control those effects with the DXX or control the DDX with adjusting the effects in Bitwig. Isn't that fanastic?
+  HighPass (EQ-2), Gate (Gate), Compressor (Compressor), EQ (EQ-5), Phase/Delay (Delay-1 with custom phase setting).
 * Select a channel in Bitwig by pressing SELECT -> ROUTING -> MAIN (the select button itself does not receive/send any SysEx/CC)
 * Open/close a group in Bitwig also by pressing SELECT -> ROUTING -> MAIN. The MAIN icon indicates the group status.
 
@@ -33,9 +36,10 @@ Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script
 4. On the DDX3216 check for matching MIDI channels by pressing MMC/MIDI -> SETUP -> Transmit/Receive Channel.
 5. On the DDX3216 check if `Direct Parameter SysEx` is enabled by pressing MMC/MIDI -> SETUP -> RX/TX.
 
-### ToDo - Things I would like to have
+### Good to know
 
-* Make the EQ, Gate and Comp working. In both directions!
+Turn on the DDX first and then start Bitwig, otherwise the initial DDX fader settings will be applied on your entire Bitwig project.
+But don't panic, if this happens, just go one step back in history by pressing CMD/CTRL+Z on your keyboard in Bitwig and everything is fine and synced!
 
 ### Not so nice, but also not deadly.
 
@@ -53,7 +57,7 @@ Thank you so much.
 
 This script is tested against Bitwig 5.3.13.
 
-Create an issue or better a PR here on GitHub, if you have something to fix or add.
+Create an issue or better a PR here on [GitHub](https://github.com/aldipower/bitwig-ddx3216-controller/issues), if you have something to fix or add.
 
 ### Credits & Disclaimer
 

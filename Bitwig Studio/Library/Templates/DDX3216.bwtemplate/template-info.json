@@ -1,0 +1,10 @@
+{
+	name : DDX3216
+	author : "Felix Gertz"
+	category : Template
+	description : "Template for the Behringer DDX3216 with chanel insert strip High Pass, Gate, Compressor, EQ and Delay."
+	url : "https://github.com/aldipower/bitwig-ddx3216-controller"
+	tags : ""
+	show_welcome_screen : false
+	creation_date : 1763487976723
+}
