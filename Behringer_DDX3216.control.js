@@ -148,9 +148,18 @@ function getParamKeyByFnCode(map, fnCode) {
     }
     return null;
 }
-const ddxDelayCodeMap = {};
-// ["CONTENTS/MIX","CONTENTS/FEEDBACK","CONTENTS/TIME","CONTENTS/BEATTIME","CONTENTS/HICUT","CONTENTS/LOCUT","CONTENTS/OFFSET","CONTENTS/SYNC"]
-const delayParamsTemplate = {};
+const ddxDelayCodeMap = {
+    PHASE: "3D",
+    TIME: "3E",
+    FEEDBACK: "3F",
+    MIX: "40",
+};
+const delayParamsTemplate = {
+    PHASE: null,
+    TIME: null,
+    FEEDBACK: null,
+    MIX: null,
+};
 /* Helper */
 function getMidiChannel() {
     const midiChannel = midiChannelSetting.getRaw() - 1;
@@ -576,23 +585,34 @@ function sendCompressorParamToDDX(faderIndex, compressorParamKey, displayedValue
     }
 }
 /// From Delay
-function sendDelayParamToDDX(faderIndex, eqParamKey, displayedValue, value) {
-    // const bandIndex = eqParamKey === "LO_FREQ" ? 0 : -1;
-    // if (isNaN(bandIndex) || bandIndex < 0 || bandIndex > 1) {
-    //   return;
-    // }
-    // let freq = displayedValue ? parseFloat(displayedValue) : 0;
-    // freq *= displayedValue.includes("kHz") ? 1000 : 1;
-    // if (!freq || isNaN(freq)) {
-    //   return;
-    // }
-    // if (freq > 400) {
-    //   freq = 400;
-    // } else if (freq < 4) {
-    //   freq = 4;
-    // }
-    // const sysExFreq = Math.round(80 * Math.log(freq / 4) / Math.log(100));
-    // sendSysExDeviceToMixer(faderIndex, ddxEq2FnCodeMap.freq[bandIndex], sysExFreq);
+function sendDelayParamToDDX(faderIndex, delayParamKey, displayedValue, value) {
+    const fnCode = ddxDelayCodeMap[delayParamKey];
+    if (fnCode == null) {
+        return;
+    }
+    if (delayParamKey === "TIME") {
+        let ms = displayedValue ? parseFloat(displayedValue) : 0;
+        if (!displayedValue.includes("ms") && displayedValue.includes("s")) {
+            ms *= 1000;
+        }
+        if (ms < 0) {
+            ms = 0;
+        }
+        else if (ms > 300) {
+            ms = 300;
+        }
+        const samples = ms / delaySampleInMs;
+        const sysExValue = Math.round(Math.sqrt(samples));
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
+    }
+    else if (delayParamKey === "FEEDBACK") {
+        const sysExValue = 90 + Math.round((value * 1.8 - 0.9) * 100);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
+    }
+    else if (delayParamKey === "MIX") {
+        const sysExValue = Math.round(value * 100);
+        sendSysExDeviceToMixer(faderIndex, fnCode, sysExValue);
+    }
 }
 /* From DDX3216 */
 function dbToNormalized(db) {
@@ -880,7 +900,6 @@ function setBitwigCompressorRatio(faderIndex, fnCode, sysexValue) {
         else if (index < 0) {
             index = 0;
         }
-        println(`INCOMING RATIO ${sysexValue} ${index} ${Object.values(DDXtoBitwigRatioMap)[index]}`);
         const param = params[`RATIO`];
         param.setImmediately(Object.values(DDXtoBitwigRatioMap)[index]);
         lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
@@ -957,6 +976,58 @@ function setBitwigDelayIsEnabled(faderIndex, isEnabled) {
         device.isEnabled().set(isEnabled);
         device.isExpanded().set(isEnabled);
         lastDeviceReceiveAction[`${faderIndex}3C`] = Date.now();
+    }
+}
+const delaySampleInMs = 300 / 13225;
+function setBitwigDelayTime(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds["Delay-1"]);
+    if (device) {
+        let samples = sysexValue * sysexValue;
+        // 0ms - 300ms
+        let ms = delaySampleInMs * samples;
+        if (ms >= 5000) {
+            ms = 5000;
+        }
+        else if (ms < 10) {
+            ms = 10;
+        }
+        const normed = Math.min(Math.max((ms - 10) / (5000 - 10), 0), 1);
+        const param = params[`TIME`];
+        param.setImmediately(normed);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+function setBitwigDelayFeedback(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds["Delay-1"]);
+    if (device) {
+        let percentage = -90 + sysexValue;
+        if (percentage >= 90) {
+            percentage = 90;
+        }
+        else if (percentage < -90) {
+            percentage = -90;
+        }
+        const normed = (percentage / 100 + 0.9) / 1.8;
+        const param = params[`FEEDBACK`];
+        param.setImmediately(normed);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+function setBitwigDelayMix(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds["Delay-1"]);
+    if (device) {
+        let percentage = sysexValue; // 0 - 100%
+        const normed = Math.min(Math.max(percentage / 100, 0), 1);
+        const param = params[`MIX`];
+        param.setImmediately(normed);
+        lastDeviceReceiveAction[`${faderIndex}${fnCode}`] = Date.now();
+    }
+}
+function setBitwigDelayPhase(faderIndex, fnCode, sysexValue) {
+    const { device, params } = getFirstDeviceById(faderIndex, BitwigDeviceIds["Delay-1"]);
+    if (device) {
+        let polarity = sysexValue;
+        println(`POLARITY ${polarity}`);
     }
 }
 /* General control functions */
@@ -1116,6 +1187,18 @@ function processIncomingSysex(sysexData) {
             else if (functionCode.toUpperCase() === "3C") {
                 setBitwigDelayIsEnabled(faderIndexInt, !!sysexValue);
             }
+            else if (getParamKeyByFnCode(ddxDelayCodeMap, functionCode.toUpperCase()) === "TIME") {
+                setBitwigDelayTime(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxDelayCodeMap, functionCode.toUpperCase()) === "FEEDBACK") {
+                setBitwigDelayFeedback(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxDelayCodeMap, functionCode.toUpperCase()) === "MIX") {
+                setBitwigDelayMix(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
+            else if (getParamKeyByFnCode(ddxDelayCodeMap, functionCode.toUpperCase()) === "PHASE") {
+                setBitwigDelayPhase(faderIndexInt, functionCode.toUpperCase(), sysexValue);
+            }
         });
     }
 }
@@ -1249,19 +1332,11 @@ function setupDeviceBank(faderIndex, track) {
                 sendSysExDeviceToMixer(faderIndex, "3C", isEnabled ? 1 : 0);
             }
         });
-        device.addDirectParameterIdObserver((ids) => {
-            println(`faderIndex ${faderIndex} deviceIndex ${j} ids ${JSON.stringify(ids)}`);
-        });
-        // device.addDirectParameterValueDisplayObserver(128, (id: string, value: string) => {
-        //   println(`AA faderIndex ${faderIndex} deviceIndex ${j} id ${id} value ${value}`);
-        // }).setObservedParameterIds(["CONTENTS/GAIN1"]);
+        // Check for available PARAM ids with that
+        // device.addDirectParameterIdObserver((ids) => {
+        //   println(`faderIndex ${faderIndex} deviceIndex ${j} ids ${JSON.stringify(ids)}`);
+        // });
     }
-    // deviceBank.itemCount().addValueObserver((count: number) => {
-    //   if (count) {
-    //     // const device = deviceBank.getItemAt(0);
-    //     // println(`${device.name().get()}`);
-    //   }
-    // }, 0);
 }
 function createBitwigSettingsUI() {
     midiChannelSetting = host
