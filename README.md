@@ -26,11 +26,6 @@ Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script
 * Select a channel in Bitwig by pressing SELECT -> ROUTING -> MAIN (the select button itself does not receive/send any SysEx/CC)
 * Open/close a group in Bitwig also by pressing SELECT -> ROUTING -> MAIN. The MAIN icon indicates the group status.
 
-### Configuration
-
-* Set the MIDI channel in the controller script config dialog in Bitwig. 0 = omni
-* Fader dB mapping behaviour is selectable between "exact" or "full range" in the config dialog. default = "exact"
-
 ### Installation
 
 1. Simply copy the the sub-folders of this project's `Bitwig Studio` folder into your own Bitwig `~/Bitwig Studio/` folder. It includes the controller script and a project template with the channel inserts ready for use.
@@ -40,7 +35,12 @@ Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script
 5. On the DDX3216 check if `Direct Parameter SysEx` is enabled by pressing MMC/MIDI -> SETUP -> RX/TX.
 6. Create a new Bitwig project by openening the template "DDX3216" and copy the channel strip effects from one of the tracks into your own project or simple use the freshly created project as a starting point.
 
-### Effects 
+### Configuration
+
+* Set the MIDI channel in the controller script config dialog in Bitwig. 0 = omni
+* Fader dB mapping behaviour is selectable between "exact" or "full range" in the config dialog. default = "exact"
+
+### Insert effects chain (dynamics)
 
 To map a Bitwig effect to the related DDX3216 insert effect, you need to rename the Bitwig effect to a specfic name or __just load the "DDX3216" Bitwig template__ you added during installation, where you find everything prepared for direct usage or copy&paste.
 
@@ -49,7 +49,7 @@ Bitwig name -> Effect name:
 * Gate -> DDX GATE
 * Compressor -> DDX COMPRESSOR
 * EQ-5 -> DDX EQ-5
-* Delay-1 -> DDX Delay-1 (use the one from the template as this has a polarity invertion option)
+* Delay-1 -> DDX DELAY (use the one from the template as this has a polarity invertion option)
 
 ![Bitwig to DDX channel strip](bitwig_ddx_channel_strip.jpg)
 
