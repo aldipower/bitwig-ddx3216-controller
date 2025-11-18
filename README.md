@@ -42,7 +42,7 @@ Be an Uli and use Bitwig like a pro with the Behringer DDX3216 controller script
 
 ### Effects 
 
-To map a Bitwig effect to the related DDX3216 insert effect, you need to rename the Bitwig effect to a specfic name or __just load the "DDX3216" Bitwig template__, where you find everything prepared for direct usage or copy&paste.
+To map a Bitwig effect to the related DDX3216 insert effect, you need to rename the Bitwig effect to a specfic name or __just load the "DDX3216" Bitwig template__ you added during installation, where you find everything prepared for direct usage or copy&paste.
 
 Bitwig name -> Effect name:
 * EQ-2 -> DDX HIGH PASS
@@ -50,6 +50,8 @@ Bitwig name -> Effect name:
 * Compressor -> DDX COMPRESSOR
 * EQ-5 -> DDX EQ-5
 * Delay-1 -> DDX Delay-1 (use the one from the template as this has a polarity invertion option)
+
+![Bitwig to DDX channel strip](bitwig_ddx_channel_strip.jpg)
 
 ### Good to know
 
