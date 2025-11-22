@@ -10,7 +10,7 @@
  */
 const VENDOR = "Behringer";
 const EXTENSION_NAME = "DDX3216";
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 const AUTHOR = "Felix Gertz";
 const DEVICE_ID = 0x7f;
 const NUM_FADERS = 16 * 3;
@@ -298,15 +298,20 @@ function toggleGroupStatus(faderIndex, isGroupExpanded) {
     if (trackCount <= 0) {
         return;
     }
-    if (!isGroupExpanded) {
-        let rightPadding = Math.max(8, 16 - (trackCount % 16));
-        if (rightPadding === 16) {
-            rightPadding = 8;
-        }
-        for (let i = faderIndex + 1; i < Math.min(NUM_FADERS, trackCount + rightPadding); i++) {
-            resetFader(i);
-        }
-    }
+    // FIX: Reset faders properly - this implementation here is buggy
+    // if (!isGroupExpanded) {
+    //   let rightPadding = Math.max(8, 16 - (trackCount % 16));
+    //   if (rightPadding === 16) {
+    //     rightPadding = 8;
+    //   }
+    //   for (
+    //     let i = faderIndex + 1;
+    //     i < Math.min(NUM_FADERS, trackCount + rightPadding);
+    //     i++
+    //   ) {
+    //     resetFader(i);
+    //   }
+    // }
 }
 function resetFader(faderIndex) {
     displayedVolumeChanged(faderIndex, "-80");
